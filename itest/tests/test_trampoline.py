@@ -3,6 +3,7 @@ from pyln.testing.fixtures import *
 from pyln.testing.utils import wait_for
 from pyln.proto.onion import TlvPayload
 import os
+import struct
 
 plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
 
