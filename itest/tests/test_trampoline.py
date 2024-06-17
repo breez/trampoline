@@ -13,9 +13,9 @@ def test_trampoline_payment(node_factory):
     sender.openchannel(trampoline, 1000000)
     trampoline.openchannel(router, 1000000)
     router.openchannel(recipient, 1000000)
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in sender.rpc.listpeerchannels()['channels']), timeout=120)
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']), timeout=120)
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in router.rpc.listpeerchannels()['channels']), timeout=120)
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in sender.rpc.listpeerchannels()['channels']))
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']))
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in router.rpc.listpeerchannels()['channels']))
 
     def truncate_encode(i: int):
         """Encode a tu64 (or tu32 etc) value"""
