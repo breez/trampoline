@@ -45,8 +45,8 @@ def test_trampoline_payment(node_factory):
     payload.add_field(8, b.getvalue())
 
     # trampoline_invoice
-    b = StringIO()
-    b.write(invoice['bolt11'])
+    b = BytesIO()
+    b.write(invoice['bolt11'].encode())
     payload.add_field(33001, b.getvalue())
 
     hops = [{
