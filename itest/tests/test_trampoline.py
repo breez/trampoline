@@ -7,21 +7,21 @@ import os
 plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
 
 def test_trampoline_payment(node_factory):
-    sender, trampoline, router, recipient = node_factory.get_nodes(4)
-    trampoline.daemon.opts['plugin'] = plugin_path
-    trampoline.restart()
-    sender.fundwallet(1000000)
+    sender, router, recipient = node_factory.get_nodes(3)
+    trampoline = node_factory.get_node(opts={'plugin': plugin_path})
+    sender.fundwallet(2000000)
+    trampoline.fundwallet(2000000)
+    router.fundwallet(2000000)
+    recipient.fundwallet(2000000)
     sender.rpc.connect(trampoline.info['id'], 'localhost', port=trampoline.port)
-    sender.rpc.fundchannel(trampoline.info['id'], 'all')
-    trampoline.fundwallet(1000000)
+    sender.rpc.fundchannel(trampoline.info['id'], 1000000)
     trampoline.rpc.connect(router.info['id'], 'localhost', port=router.port)
-    trampoline.rpc.fundchannel(router.info['id'], 'all')
-    router.fundwallet(1000000)
+    trampoline.rpc.fundchannel(router.info['id'], 1000000)
     router.rpc.connect(recipient.info['id'], 'localhost', port=recipient.port)
-    router.rpc.fundchannel(recipient.info['id'], 'all')
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in sender.rpc.listpeerchannels()['channels']))
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']))
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in router.rpc.listpeerchannels()['channels']))
+    router.rpc.fundchannel(recipient.info['id'], 1000000)
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in sender.rpc.listpeerchannels()['channels']), timeout=120)
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']), timeout=120)
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in router.rpc.listpeerchannels()['channels']), timeout=120)
 
     def truncate_encode(i: int):
         """Encode a tu64 (or tu32 etc) value"""

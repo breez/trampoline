@@ -1,0 +1,79 @@
+name: Continuous Integration
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+     
+      - name: Run Format
+        run: make fmt-check
+  
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install stable --profile minimal
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: clippy
+        run: make clippy
+  
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rust
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install stable --profile minimal
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install bitcoind
+        run: |
+          wget -q "https://bitcoincore.org/bin/bitcoin-core-26.1/bitcoin-26.1-x86_64-linux-gnu.tar.gz"
+          tar -xzf "bitcoin-26.1-x86_64-linux-gnu.tar.gz"
+          sudo cp -r "bitcoin-26.1/bin" "/usr/local"
+          rm -rf "bitcoin-26.1-x86_64-linux-gnu.tar.gz" "bitcoin-26.1"
+      
+      - name: Install lightningd
+        run: |
+          wget -q "https://github.com/ElementsProject/lightning/releases/download/v24.05/clightning-v24.05-Ubuntu-22.04.tar.xz"
+          mkdir cln
+          tar -xf "clightning-v24.05-Ubuntu-22.04.tar.xz" -C cln
+          sudo cp -r "cln/usr" "/"
+          rm -rf "clightning-v24.05-Ubuntu-22.04.tar.xz" "cln"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        working-directory: itest
+        run: |
+          pip install -U pip poetry
+          poetry export -o /tmp/requirements.txt --without-hashes
+          pip install -r /tmp/requirements.txt
+
+      - name: test
+        run: make test
