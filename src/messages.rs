@@ -33,18 +33,18 @@ pub struct Htlc {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "result")]
 pub enum HtlcAcceptedResponse {
-    #[serde(alias = "continue")]
+    #[serde(rename = "continue")]
     Continue {
         #[serde(default)]
         #[serde(skip_serializing_if = "Option::is_none", serialize_with = "to_hex")]
         payload: Option<Vec<u8>>,
     },
-    #[serde(alias = "fail")]
+    #[serde(rename = "fail")]
     Fail {
         #[serde(with = "hex::serde")]
         failure_message: Vec<u8>,
     },
-    #[serde(alias = "resolve")]
+    #[serde(rename = "resolve")]
     Resolve {
         #[serde(with = "hex::serde")]
         payment_key: Vec<u8>,
@@ -194,7 +194,7 @@ mod encode_failure_tests {
 #[cfg(test)]
 mod serialize_cln_messages_tests {
     use crate::{
-        messages::{Htlc, Onion},
+        messages::{Htlc, HtlcAcceptedResponse, Onion},
         tlv::SerializedTlvStream,
     };
 
@@ -243,5 +243,33 @@ mod serialize_cln_messages_tests {
             },
             request
         )
+    }
+
+    #[test]
+    fn serialize_htlc_accepted_response_continue() {
+        let resp = HtlcAcceptedResponse::Continue { payload: None };
+        let j = serde_json::to_string(&resp).unwrap();
+        assert_eq!(r#"{"result":"continue"}"#, j);
+    }
+
+    #[test]
+    fn serialize_htlc_accepted_response_continue_with_payload() {
+        let resp = HtlcAcceptedResponse::Continue { payload: Some(vec![1]) };
+        let j = serde_json::to_string(&resp).unwrap();
+        assert_eq!(r#"{"result":"continue","payload":"01"}"#, j);
+    }
+
+    #[test]
+    fn serialize_htlc_accepted_resolve() {
+        let resp = HtlcAcceptedResponse::Resolve { payment_key: vec![1] };
+        let j = serde_json::to_string(&resp).unwrap();
+        assert_eq!(r#"{"result":"resolve","payment_key":"01"}"#, j);
+    }
+
+    #[test]
+    fn serialize_htlc_accepted_response_fail() {
+        let resp = HtlcAcceptedResponse::Fail { failure_message: vec![1] };
+        let j = serde_json::to_string(&resp).unwrap();
+        assert_eq!(r#"{"result":"fail","failure_message":"01"}"#, j);
     }
 }
