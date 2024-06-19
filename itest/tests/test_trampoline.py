@@ -7,9 +7,16 @@ import struct
 
 plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
 
+@pytest.mark.timeout(60)
 def test_trampoline_payment(node_factory):
     sender, router, recipient = node_factory.get_nodes(3)
-    trampoline = node_factory.get_node(opts={'plugin': plugin_path})
+    trampoline = node_factory.get_node(options={'plugin': plugin_path}, start=False)
+    trampoline.daemon.env['CLN_PLUGIN_LOG'] = 'cln_plugin=trace,cln_rpc=trace,cln_grpc=trace,trampoline=trace,debug'
+    try:
+        trampoline.start(True)
+    except Exception:
+        trampoline.daemon.stop()
+        raise
     sender.openchannel(trampoline, 1000000)
     trampoline.openchannel(router, 1000000)
     router.openchannel(recipient, 1000000)

@@ -1,2 +1,4 @@
 /target
 /.python-version
+/test-env
+.pytest_cache

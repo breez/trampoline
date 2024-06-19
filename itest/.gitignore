@@ -1,2 +1,4 @@
-poetry.lock
 __pycache__
+/trampoline.egg-info
+/build
+/.pytest_cache
