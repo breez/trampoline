@@ -56,37 +56,40 @@ where
             HtlcCheckResult::Trampoline(trampoline) => trampoline,
         };
 
-        let mut payments = self.payments.lock().await;
-        let payment_state = payments
-            .entry(*trampoline.invoice.payment_hash())
-            .or_insert_with(|| {
-                let (s1, r1) = mpsc::channel(1);
-                let (s2, r2) = mpsc::channel(1);
-                // TODO: What to do with this watch handle?
-                tokio::spawn(watch_payment(
-                    Arc::clone(&self.payment_provider),
-                    Arc::clone(&self.payments),
-                    *trampoline.clone(),
-                    self.mpp_timeout,
-                    r1,
-                    r2,
-                ));
-                PaymentState::new(*trampoline.clone(), s1, s2)
-            });
+        {
+            let mut payments = self.payments.lock().await;
+            let payment_state = payments
+                .entry(*trampoline.invoice.payment_hash())
+                .or_insert_with(|| {
+                    let (s1, r1) = mpsc::channel(1);
+                    let (s2, r2) = mpsc::channel(1);
+                    // TODO: What to do with this watch handle?
+                    tokio::spawn(watch_payment(
+                        Arc::clone(&self.payment_provider),
+                        Arc::clone(&self.payments),
+                        *trampoline.clone(),
+                        self.mpp_timeout,
+                        r1,
+                        r2,
+                    ));
+                    PaymentState::new(*trampoline.clone(), s1, s2)
+                });
 
-        // If the trampoline info doesn't match previous trampoline infos, fail
-        // the payment asap.
-        if *trampoline != payment_state.trampoline {
-            payment_state
-                .fail(self.temporary_trampoline_failure())
-                .await;
+            // If the trampoline info doesn't match previous trampoline infos,
+            // fail the payment asap.
+            if *trampoline != payment_state.trampoline {
+                payment_state
+                    .fail(self.temporary_trampoline_failure())
+                    .await;
+            }
+
+            // TODO: Deduplicate replayed htlcs?
+
+            // Do add the htlc to the payment state always, also if it has
+            // failed. It could be a payment was already in-flight, so 
+            // eventually this htlc settles.
+            payment_state.add_htlc(req, sender).await;
         }
-
-        // TODO: Deduplicate replayed htlcs?
-
-        // Do add the htlc to the payment manager always, also if it has failed.
-        // The payment manager is eventually responsible for resolving the htlc.
-        payment_state.add_htlc(req, sender).await;
 
         receiver.await.unwrap()
     }
