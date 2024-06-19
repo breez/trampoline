@@ -154,21 +154,6 @@ where
             return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
 
-        // Ensure there's enough absolute time to claim htlcs.
-        if req
-            .htlc
-            .cltv_expiry
-            .saturating_sub(req.onion.outgoing_cltv_value)
-            < self.routing_policy.cltv_expiry_delta as u32
-        {
-            trace!(
-                cltv_expiry = req.htlc.cltv_expiry,
-                outgoing_cltv_value = req.onion.outgoing_cltv_value,
-                policy_cltv_expiry_delta = self.routing_policy.cltv_expiry_delta,
-                "Absolute cltv expiry too low.");
-            return HtlcCheckResult::Response(self.temporary_trampoline_failure());
-        }
-
         // Check whether we are the last hop in the route hint. We can't rewrite
         // this as a forward, so we'll error if that's the case.
         let route_hints = trampoline.invoice.route_hints();
