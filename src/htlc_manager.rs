@@ -45,10 +45,10 @@ where
 
     pub async fn add_htlc(
         &self,
-        req: HtlcAcceptedRequest,
+        req: &HtlcAcceptedRequest,
     ) -> oneshot::Receiver<HtlcAcceptedResponse> {
         let (sender, receiver) = oneshot::channel();
-        let trampoline = match self.check_htlc(&req) {
+        let trampoline = match self.check_htlc(req) {
             HtlcCheckResult::Response(resp) => {
                 let _ = sender.send(resp);
                 return receiver;
@@ -86,7 +86,7 @@ where
 
         // Do add the htlc to the payment manager always, also if it has failed.
         // The payment manager is eventually responsible for resolving the htlc.
-        payment_state.add_htlc(&req, sender).await;
+        payment_state.add_htlc(req, sender).await;
 
         receiver
     }
@@ -579,7 +579,7 @@ mod tests {
         let mut request = request(sender_amount());
         request.onion.short_channel_id = Some("0x0x0".parse().unwrap());
 
-        let receiver = manager.add_htlc(request).await;
+        let receiver = manager.add_htlc(&request).await;
         let result = receiver.await.unwrap();
 
         assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
@@ -592,7 +592,7 @@ mod tests {
         let mut request = request(sender_amount());
         request.onion.payload = SerializedTlvStream::from(vec![]);
 
-        let receiver = manager.add_htlc(request).await;
+        let receiver = manager.add_htlc(&request).await;
         let result = receiver.await.unwrap();
 
         assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
@@ -605,7 +605,7 @@ mod tests {
         payment_provider.expect_pay().return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let receiver = manager.add_htlc(request(sender_amount())).await;
+        let receiver = manager.add_htlc(&request(sender_amount())).await;
         let result = receiver.await.unwrap();
 
         let preimage = preimage().to_vec();
@@ -634,7 +634,7 @@ mod tests {
             .return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let receiver = manager.add_htlc(request(sender_amount)).await;
+        let receiver = manager.add_htlc(&request(sender_amount)).await;
         let result = receiver.await.unwrap();
 
         let preimage = preimage().to_vec();
@@ -652,7 +652,7 @@ mod tests {
         payment_provider.expect_pay().return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let receiver = manager.add_htlc(request(sender_amount())).await;
+        let receiver = manager.add_htlc(&request(sender_amount())).await;
         let result = receiver.await.unwrap();
 
         let failure = temporary_trampoline_failure();
@@ -669,7 +669,7 @@ mod tests {
         let amount = sender_amount() - 1;
 
         let start = tokio::time::Instant::now();
-        let receiver = manager.add_htlc(request(amount)).await;
+        let receiver = manager.add_htlc(&request(amount)).await;
         let result = receiver.await.unwrap();
         let end = tokio::time::Instant::now();
 
@@ -691,8 +691,8 @@ mod tests {
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
 
-        let receiver1 = manager.add_htlc(request(amount1)).await;
-        let receiver2 = manager.add_htlc(request(amount2)).await;
+        let receiver1 = manager.add_htlc(&request(amount1)).await;
+        let receiver2 = manager.add_htlc(&request(amount2)).await;
         let result1 = receiver1.await.unwrap();
         let result2 = receiver2.await.unwrap();
 
@@ -716,8 +716,8 @@ mod tests {
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
 
-        let receiver1 = manager.add_htlc(request(amount1)).await;
-        let receiver2 = manager.add_htlc(request(amount2)).await;
+        let receiver1 = manager.add_htlc(&request(amount1)).await;
+        let receiver2 = manager.add_htlc(&request(amount2)).await;
         let result1 = receiver1.await.unwrap();
         let result2 = receiver2.await.unwrap();
 
