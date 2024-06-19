@@ -99,7 +99,7 @@ impl HtlcFailReason {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrampolineRoutingPolicy {
     pub fee_base_msat: u32,
     pub fee_proportional_millionths: u32,

@@ -9,7 +9,7 @@ use cln_rpc::{
 };
 #[cfg(test)]
 use mockall::automock;
-use tracing::warn;
+use tracing::{instrument, warn};
 
 #[cfg_attr(test, automock)]
 #[async_trait]
@@ -30,6 +30,7 @@ impl PayPaymentProvider {
 
 #[async_trait]
 impl PaymentProvider for PayPaymentProvider {
+    #[instrument(skip(self))]
     async fn pay(&self, req: PaymentRequest) -> Result<Vec<u8>> {
         // TODO: This creates a new unix socket connection for every payment.
         // Also, does this cause different requests to steal eachothers

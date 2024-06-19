@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use anyhow::{anyhow, Result};
 use secp256k1::hashes::sha256::Hash;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, field, instrument, trace, warn};
 
 use crate::{
     messages::{HtlcAcceptedRequest, HtlcAcceptedResponse, TrampolineRoutingPolicy},
@@ -43,16 +43,16 @@ where
         }
     }
 
-    pub async fn add_htlc(
-        &self,
-        req: &HtlcAcceptedRequest,
-    ) -> oneshot::Receiver<HtlcAcceptedResponse> {
+    #[instrument(
+        skip(self),
+        fields(
+            payment_hash = hex::encode(&req.htlc.payment_hash),
+            short_channel_id = %req.htlc.short_channel_id,
+            htlc_id = req.htlc.id))]
+    pub async fn add_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
         let (sender, receiver) = oneshot::channel();
         let trampoline = match self.check_htlc(req) {
-            HtlcCheckResult::Response(resp) => {
-                let _ = sender.send(resp);
-                return receiver;
-            }
+            HtlcCheckResult::Response(resp) => return resp,
             HtlcCheckResult::Trampoline(trampoline) => trampoline,
         };
 
@@ -88,13 +88,14 @@ where
         // The payment manager is eventually responsible for resolving the htlc.
         payment_state.add_htlc(req, sender).await;
 
-        receiver
+        receiver.await.unwrap()
     }
 
     fn check_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcCheckResult {
         // For trampoline payments we appear to be the destination. If we're not the
         // destination, continue.
         if req.onion.short_channel_id.is_some() {
+            trace!("This is a forward, returning continue.");
             return HtlcCheckResult::Response(default_response());
         }
 
@@ -102,7 +103,10 @@ where
         let trampoline = match self.extract_trampoline_info(req) {
             Ok(trampoline) => match trampoline {
                 Some(trampoline) => trampoline,
-                None => return HtlcCheckResult::Response(default_response()),
+                None => {
+                    trace!("This is a not a trampoline htlc, returning continue.");
+                    return HtlcCheckResult::Response(default_response());
+                }
             },
             Err(e) => {
                 debug!("Failed to extract trampoline info from htlc: {:?}", e);
@@ -114,6 +118,7 @@ where
         // htlc.
         // TODO: Double check whether this makes sense.
         if trampoline.payee.eq(&self.local_pubkey) {
+            trace!("We are the payee, invoice subsystem handles this htlc.");
             return HtlcCheckResult::Response(default_response());
         }
 
@@ -129,11 +134,20 @@ where
             .routing_policy
             .fee_sufficient(total_msat, trampoline.amount_msat)
         {
+            trace!(
+                total_msat = total_msat, 
+                trampoline.amount_msat = trampoline.amount_msat,
+                policy = field::debug(&self.routing_policy),
+                "Payment offers too low fee for trampoline.");
             return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
 
         // Ensure there's enough relative time to claim htlcs.
         if req.htlc.cltv_expiry_relative < self.routing_policy.cltv_expiry_delta as i64 {
+            trace!(
+                cltv_expiry_relative = req.htlc.cltv_expiry_relative,
+                policy_cltv_expiry_delta = self.routing_policy.cltv_expiry_delta,
+                "Relative cltv expiry too low.");
             return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
 
@@ -144,6 +158,11 @@ where
             .saturating_sub(req.onion.outgoing_cltv_value)
             < self.routing_policy.cltv_expiry_delta as u32
         {
+            trace!(
+                cltv_expiry = req.htlc.cltv_expiry,
+                outgoing_cltv_value = req.onion.outgoing_cltv_value,
+                policy_cltv_expiry_delta = self.routing_policy.cltv_expiry_delta,
+                "Absolute cltv expiry too low.");
             return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
 
@@ -175,6 +194,7 @@ where
             return HtlcCheckResult::Response(HtlcAcceptedResponse::temporary_node_failure());
         }
 
+        debug!("This is a trampoline payment.");
         HtlcCheckResult::Trampoline(Box::new(trampoline))
     }
 
@@ -269,6 +289,11 @@ fn default_response() -> HtlcAcceptedResponse {
     HtlcAcceptedResponse::Continue { payload: None }
 }
 
+#[instrument(
+    skip(payment_provider, payments, payment_ready, fail_requested),
+    fields(
+        payment_hash = %trampoline.invoice.payment_hash(),
+        bolt11 = trampoline.bolt11))]
 async fn watch_payment<P>(
     payment_provider: Arc<P>,
     payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
@@ -283,10 +308,12 @@ async fn watch_payment<P>(
 
     tokio::select! {
         _ = tokio::time::sleep(mpp_timeout) => {
-            debug!("Payment with hash {} timed out waiting for htlcs.", trampoline.invoice.payment_hash());
+            debug!("Payment timed out waiting for htlcs.");
             let mut payments = payments.lock().await;
-            let mut state = payments.remove(trampoline.invoice.payment_hash()).expect("Payment timed out waiting for htlcs, but payment was already gone.");
-            state.resolve(HtlcAcceptedResponse::temporary_trampoline_failure(trampoline.routing_policy.clone()));
+            let mut state = payments.remove(trampoline.invoice.payment_hash())
+                .expect("Payment timed out waiting for htlcs, but payment was already gone.");
+            state.resolve(HtlcAcceptedResponse::temporary_trampoline_failure(
+                trampoline.routing_policy.clone()));
 
             return;
         }
@@ -294,20 +321,21 @@ async fn watch_payment<P>(
             let failure = match failure {
                 Some(failure) => failure,
                 None => {
-                    warn!("fail_requested receiver was closed when it shouldn't be");
+                    error!("fail_requested receiver was closed when it shouldn't be");
                     HtlcAcceptedResponse::temporary_node_failure()
                 },
             };
 
-            debug!("Fail requested for payment with hash {}", trampoline.invoice.payment_hash());
+            debug!("Payment fail requested.");
             let mut payments = payments.lock().await;
-            let mut state = payments.remove(trampoline.invoice.payment_hash()).expect("Fail requested for payment, but payment was already gone");
+            let mut state = payments.remove(trampoline.invoice.payment_hash())
+                .expect("Fail requested for payment, but payment was already gone");
             state.resolve(failure);
 
             return;
         }
         _ = payment_ready.recv() => {
-            debug!("Received payment ready for payment with hash {}", trampoline.invoice.payment_hash());
+            debug!("Received payment ready.");
         }
     };
 
@@ -328,6 +356,7 @@ async fn watch_payment<P>(
 
     // TODO: re-check the cltv expiry.
     // TODO: Persist we're about to pay.
+    trace!("about to pay.");
     let pay_result = payment_provider
         .pay(PaymentRequest {
             bolt11: trampoline.bolt11,
@@ -343,12 +372,14 @@ async fn watch_payment<P>(
 
     match pay_result {
         Ok(preimage) => {
+            debug!("Payment succeeded, resolving payment with preimage.");
             // TODO: Persist the preimage
             payment.resolve(HtlcAcceptedResponse::Resolve {
                 payment_key: preimage,
             });
         }
-        Err(_) => {
+        Err(e) => {
+            debug!(error = field::debug(e), "Payment failed.");
             // TODO: Extract relevant info from the error. And persist failure.
             payment.resolve(HtlcAcceptedResponse::temporary_trampoline_failure(
                 trampoline.routing_policy.clone(),
@@ -405,6 +436,11 @@ impl PaymentState {
                 .routing_policy
                 .fee_sufficient(self.amount_received_msat, self.trampoline.amount_msat)
         {
+            trace!(
+                amount_received_msat = self.amount_received_msat,
+                trampoline.amount_msat = self.trampoline.amount_msat,
+                "Payment is ready."
+            );
             self.is_ready = true;
             let _ = self.payment_ready.send(()).await;
         }
@@ -431,7 +467,7 @@ enum HtlcCheckResult {
     Trampoline(Box<TrampolineInfo>),
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct TrampolineInfo {
     pub bolt11: String,
     pub invoice: Bolt11Invoice,
@@ -579,8 +615,7 @@ mod tests {
         let mut request = request(sender_amount());
         request.onion.short_channel_id = Some("0x0x0".parse().unwrap());
 
-        let receiver = manager.add_htlc(&request).await;
-        let result = receiver.await.unwrap();
+        let result = manager.add_htlc(&request).await;
 
         assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
     }
@@ -592,8 +627,7 @@ mod tests {
         let mut request = request(sender_amount());
         request.onion.payload = SerializedTlvStream::from(vec![]);
 
-        let receiver = manager.add_htlc(&request).await;
-        let result = receiver.await.unwrap();
+        let result = manager.add_htlc(&request).await;
 
         assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
     }
@@ -605,8 +639,7 @@ mod tests {
         payment_provider.expect_pay().return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let receiver = manager.add_htlc(&request(sender_amount())).await;
-        let result = receiver.await.unwrap();
+        let result = manager.add_htlc(&request(sender_amount())).await;
 
         let preimage = preimage().to_vec();
         assert!(
@@ -634,8 +667,7 @@ mod tests {
             .return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let receiver = manager.add_htlc(&request(sender_amount)).await;
-        let result = receiver.await.unwrap();
+        let result = manager.add_htlc(&request(sender_amount)).await;
 
         let preimage = preimage().to_vec();
         assert!(
@@ -652,8 +684,7 @@ mod tests {
         payment_provider.expect_pay().return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let receiver = manager.add_htlc(&request(sender_amount())).await;
-        let result = receiver.await.unwrap();
+        let result = manager.add_htlc(&request(sender_amount())).await;
 
         let failure = temporary_trampoline_failure();
         assert!(
@@ -669,8 +700,7 @@ mod tests {
         let amount = sender_amount() - 1;
 
         let start = tokio::time::Instant::now();
-        let receiver = manager.add_htlc(&request(amount)).await;
-        let result = receiver.await.unwrap();
+        let result = manager.add_htlc(&request(amount)).await;
         let end = tokio::time::Instant::now();
 
         let elapsed = end - start;
@@ -691,10 +721,8 @@ mod tests {
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
 
-        let receiver1 = manager.add_htlc(&request(amount1)).await;
-        let receiver2 = manager.add_htlc(&request(amount2)).await;
-        let result1 = receiver1.await.unwrap();
-        let result2 = receiver2.await.unwrap();
+        let result1 = manager.add_htlc(&request(amount1)).await;
+        let result2 = manager.add_htlc(&request(amount2)).await;
 
         let preimage = preimage().to_vec();
         assert!(
@@ -716,10 +744,8 @@ mod tests {
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
 
-        let receiver1 = manager.add_htlc(&request(amount1)).await;
-        let receiver2 = manager.add_htlc(&request(amount2)).await;
-        let result1 = receiver1.await.unwrap();
-        let result2 = receiver2.await.unwrap();
+        let result1 = manager.add_htlc(&request(amount1)).await;
+        let result2 = manager.add_htlc(&request(amount2)).await;
 
         let failure = temporary_trampoline_failure();
         assert!(

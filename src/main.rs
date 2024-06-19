@@ -6,6 +6,7 @@ use htlc_manager::HtlcManager;
 use messages::TrampolineRoutingPolicy;
 use payment_provider::PayPaymentProvider;
 use plugin::PluginState;
+use tracing::info;
 
 mod htlc_manager;
 mod messages;
@@ -41,6 +42,9 @@ async fn main() -> Result<(), Error> {
     let htlc_manager = HtlcManager::new(info.id, policy, mpp_timeout, payment_provider);
     let state = PluginState::new(htlc_manager);
     let plugin = cp.start(state.clone()).await?;
+
+    info!("Trampoline plugin started");
+
     plugin.join().await?;
     Ok(())
 }
