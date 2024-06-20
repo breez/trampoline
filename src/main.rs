@@ -20,9 +20,8 @@ mod tlv;
 const OPTION_CLTV_EXPIRY_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
     "trampoline-cltv-expiry-delta",
     576,
-    "Cltv expiry delta for the trampoline routing policy. Any routes
-    where the total cltv delta is lower than this number will not be
-    tried.",
+    "Cltv expiry delta for the trampoline routing policy. Any routes where the \
+    total cltv delta is lower than this number will not be tried.",
 );
 // TODO: A zero base fee default may exclude many routes for small payments.
 const OPTION_FEE_BASE_MSAT: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
@@ -38,15 +37,15 @@ const OPTION_FEE_PPM: DefaultIntegerConfigOption = ConfigOption::new_i64_with_de
 const OPTION_MPP_TIMEOUT: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
     "trampoline-mpp-timeout",
     60,
-    "Timeout in seconds before multipart htlcs that don't add up to the
+    "Timeout in seconds before multipart htlcs that don't add up to the \
     payment amount are failed back to the sender.",
 );
 const OPTION_NO_SELF_ROUTE_HINTS: FlagConfigOption = ConfigOption::new_flag(
     "trampoline-no-self-route-hints",
-    "If this flag is set, invoices where the current node is in an 
-    invoice route hint are not supported. This can be useful if there
-    are other important plugins acting only on forwards. The trampoline
-    plugin will 'receive' and 'pay', so has different dynamics.",
+    "If this flag is set, invoices where the current node is in an invoice \
+    route hint are not supported. This can be useful if there are other \
+    important plugins acting only on forwards. The trampoline plugin will \
+    'receive' and 'pay', so has different dynamics.",
 );
 
 #[tokio::main]
