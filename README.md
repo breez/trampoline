@@ -32,9 +32,10 @@ to core lightning on startup.
 ```
 
 ## Testing
+To run all tests call `make test`, or `make test -j2`
 
 ### Unit tests
-To run the unit tests call `make utest`.
+To run only the unit tests call `make utest`.
 
 ### Integration tests
 
@@ -44,7 +45,7 @@ In order to run the integration tests you need
 - `virtualenv` (`python -m pip install --user virtualenv`)
 
 #### Running integration tests
-Call `make itest` to run the integration tests.
+Call `make itest` to only run the integration tests.
 
 ## Contributing
 Contributions are welcome!
