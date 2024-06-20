@@ -484,6 +484,8 @@ mod tests {
         hashes::{sha256, Hash},
         PublicKey, Secp256k1, SecretKey,
     };
+    use tokio::join;
+    use tracing_test::traced_test;
 
     use crate::{
         htlc_manager::HtlcManager,
@@ -607,6 +609,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_regular_forward() {
         let payment_provider = payment_provider();
         let manager = htlc_manager(payment_provider);
@@ -619,6 +622,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_receive_without_invoice() {
         let payment_provider = payment_provider();
         let manager = htlc_manager(payment_provider);
@@ -631,6 +635,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_single_htlc_success() {
         let mut payment_provider = payment_provider();
         let pay_result = Ok(preimage().to_vec());
@@ -648,6 +653,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_single_htlc_overpay_success() {
         let mut payment_provider = payment_provider();
         let pay_result = Ok(preimage().to_vec());
@@ -676,6 +682,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_single_htlc_payment_failure() {
         let mut payment_provider = payment_provider();
         let pay_result = Err(anyhow!("payment failed"));
@@ -693,6 +700,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_single_htlc_too_low_times_out() {
         let manager = htlc_manager(payment_provider());
         let amount = sender_amount() - 1;
@@ -711,6 +719,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_two_htlc_success() {
         let mut payment_provider = payment_provider();
         let pay_result = Ok(preimage().to_vec());
@@ -718,9 +727,13 @@ mod tests {
         let manager = htlc_manager(payment_provider);
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
+        let request1 = request(amount1);
+        let request2 = request(amount2);
 
-        let result1 = manager.handle_htlc(&request(amount1)).await;
-        let result2 = manager.handle_htlc(&request(amount2)).await;
+        let (result1, result2) = join!(
+            manager.handle_htlc(&request1),
+            manager.handle_htlc(&request2)
+        );
 
         let preimage = preimage().to_vec();
         assert!(
@@ -734,6 +747,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_two_htlc_failure() {
         let mut payment_provider = payment_provider();
         let pay_result = Err(anyhow!("Payment failed"));
@@ -741,9 +755,13 @@ mod tests {
         let manager = htlc_manager(payment_provider);
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
+        let request1 = request(amount1);
+        let request2 = request(amount2);
 
-        let result1 = manager.handle_htlc(&request(amount1)).await;
-        let result2 = manager.handle_htlc(&request(amount2)).await;
+        let (result1, result2) = join!(
+            manager.handle_htlc(&request1),
+            manager.handle_htlc(&request2)
+        );
 
         let failure = temporary_trampoline_failure();
         assert!(
