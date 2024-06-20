@@ -29,7 +29,6 @@ pub struct Htlc {
     pub payment_hash: Vec<u8>,
 }
 
-// TODO: Properly serialize
 #[derive(Clone, Serialize)]
 #[serde(tag = "result")]
 pub enum HtlcAcceptedResponse {

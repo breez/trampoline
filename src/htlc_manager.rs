@@ -67,7 +67,6 @@ where
                 .or_insert_with(|| {
                     let (s1, r1) = mpsc::channel(1);
                     let (s2, r2) = mpsc::channel(1);
-                    // TODO: What to do with this watch handle?
                     tokio::spawn(watch_payment(
                         Arc::clone(&self.payment_provider),
                         Arc::clone(&self.payments),

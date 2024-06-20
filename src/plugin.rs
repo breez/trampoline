@@ -19,7 +19,6 @@ impl<P> PluginState<P>
 where
     P: PaymentProvider,
 {
-    // TODO: initialize the state.
     pub fn new(htlc_manager: HtlcManager<P>) -> Self {
         Self {
             htlc_manager: Arc::new(htlc_manager),
