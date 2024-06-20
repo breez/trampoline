@@ -10,14 +10,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  fmt:
-    name: Format
+  fmt-check:
+    name: Format Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
      
-      - name: Run Format
+      - name: Install rust
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install stable --profile minimal
+
+      - name: Run Format check
         run: make fmt-check
   
   clippy:
@@ -38,10 +43,13 @@ jobs:
       - name: clippy
         run: make clippy
   
-  test:
-    name: Tests
+  itest:
+    name: Integration tests
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install rust
         run: |
           rustup set auto-self-update disable
@@ -65,15 +73,23 @@ jobs:
           sudo cp -r "cln/usr" "/"
           rm -rf "clightning-v24.05-Ubuntu-22.04.tar.xz" "cln"
 
+      - name: Integration tests
+        run: make itest
+  
+  utest:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install test dependencies
-        working-directory: itest
+      - name: Install rust
         run: |
-          pip install -U pip poetry
-          poetry export -o /tmp/requirements.txt --without-hashes
-          pip install -r /tmp/requirements.txt
+          rustup set auto-self-update disable
+          rustup toolchain install stable --profile minimal
 
-      - name: test
-        run: make test
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Unit tests
+        run: make utest

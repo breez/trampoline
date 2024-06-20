@@ -21,10 +21,15 @@ fmt:
 fmt-check:
 	cargo fmt -- --check
 
-test: build test-env
-	test-env/bin/pytest itest/tests
+itest: build itest-env
+	itest-env/bin/pytest itest/tests
 
-test-env:
-	virtualenv test-env --python=$(which python3) --download --always-copy --clear
-	test-env/bin/python3 -m pip install -U pip
-	test-env/bin/pip install ./itest
+itest-env:
+	virtualenv itest-env --python=$(which python3) --download --always-copy --clear
+	itest-env/bin/python3 -m pip install -U pip
+	itest-env/bin/pip install ./itest
+
+test: utest itest
+
+utest:
+	cargo test
