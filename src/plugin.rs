@@ -42,6 +42,6 @@ where
     P: PaymentProvider + Clone + Send + Sync + 'static,
 {
     let req: HtlcAcceptedRequest = serde_json::from_value(v)?;
-    let resp = plugin.state().htlc_manager.add_htlc(&req).await;
+    let resp = plugin.state().htlc_manager.handle_htlc(&req).await;
     Ok(serde_json::to_value(resp)?)
 }

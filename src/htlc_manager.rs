@@ -49,7 +49,7 @@ where
             payment_hash = hex::encode(&req.htlc.payment_hash),
             short_channel_id = %req.htlc.short_channel_id,
             htlc_id = req.htlc.id))]
-    pub async fn add_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
+    pub async fn handle_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
         let (sender, receiver) = oneshot::channel();
         let trampoline = match self.check_htlc(req) {
             HtlcCheckResult::Response(resp) => return resp,
@@ -603,7 +603,7 @@ mod tests {
         let mut request = request(sender_amount());
         request.onion.short_channel_id = Some("0x0x0".parse().unwrap());
 
-        let result = manager.add_htlc(&request).await;
+        let result = manager.handle_htlc(&request).await;
 
         assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
     }
@@ -615,7 +615,7 @@ mod tests {
         let mut request = request(sender_amount());
         request.onion.payload = SerializedTlvStream::from(vec![]);
 
-        let result = manager.add_htlc(&request).await;
+        let result = manager.handle_htlc(&request).await;
 
         assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
     }
@@ -627,7 +627,7 @@ mod tests {
         payment_provider.expect_pay().return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let result = manager.add_htlc(&request(sender_amount())).await;
+        let result = manager.handle_htlc(&request(sender_amount())).await;
 
         let preimage = preimage().to_vec();
         assert!(
@@ -655,7 +655,7 @@ mod tests {
             .return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let result = manager.add_htlc(&request(sender_amount)).await;
+        let result = manager.handle_htlc(&request(sender_amount)).await;
 
         let preimage = preimage().to_vec();
         assert!(
@@ -672,7 +672,7 @@ mod tests {
         payment_provider.expect_pay().return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
 
-        let result = manager.add_htlc(&request(sender_amount())).await;
+        let result = manager.handle_htlc(&request(sender_amount())).await;
 
         let failure = temporary_trampoline_failure();
         assert!(
@@ -688,7 +688,7 @@ mod tests {
         let amount = sender_amount() - 1;
 
         let start = tokio::time::Instant::now();
-        let result = manager.add_htlc(&request(amount)).await;
+        let result = manager.handle_htlc(&request(amount)).await;
         let end = tokio::time::Instant::now();
 
         let elapsed = end - start;
@@ -709,8 +709,8 @@ mod tests {
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
 
-        let result1 = manager.add_htlc(&request(amount1)).await;
-        let result2 = manager.add_htlc(&request(amount2)).await;
+        let result1 = manager.handle_htlc(&request(amount1)).await;
+        let result2 = manager.handle_htlc(&request(amount2)).await;
 
         let preimage = preimage().to_vec();
         assert!(
@@ -732,8 +732,8 @@ mod tests {
         let amount1 = 1;
         let amount2 = sender_amount() - amount1;
 
-        let result1 = manager.add_htlc(&request(amount1)).await;
-        let result2 = manager.add_htlc(&request(amount2)).await;
+        let result1 = manager.handle_htlc(&request(amount1)).await;
+        let result2 = manager.handle_htlc(&request(amount2)).await;
 
         let failure = temporary_trampoline_failure();
         assert!(
