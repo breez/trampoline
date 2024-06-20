@@ -44,9 +44,10 @@ where
     }
 
     #[instrument(
-        skip(self),
+        level = "debug",
+        skip_all,
         fields(
-            payment_hash = hex::encode(&req.htlc.payment_hash),
+            payment_hash = %hex::encode(&req.htlc.payment_hash),
             short_channel_id = %req.htlc.short_channel_id,
             htlc_id = req.htlc.id))]
     pub async fn handle_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
@@ -86,12 +87,14 @@ where
             // TODO: Deduplicate replayed htlcs?
 
             // Do add the htlc to the payment state always, also if it has
-            // failed. It could be a payment was already in-flight, so 
+            // failed. It could be a payment was already in-flight, so
             // eventually this htlc settles.
             payment_state.add_htlc(req, sender).await;
         }
 
-        receiver.await.unwrap()
+        let resp = receiver.await.unwrap();
+        debug!("returning {:?}", resp);
+        resp
     }
 
     fn check_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcCheckResult {
@@ -138,10 +141,11 @@ where
             .fee_sufficient(total_msat, trampoline.amount_msat)
         {
             trace!(
-                total_msat = total_msat, 
+                total_msat = total_msat,
                 trampoline.amount_msat = trampoline.amount_msat,
                 policy = field::debug(&self.routing_policy),
-                "Payment offers too low fee for trampoline.");
+                "Payment offers too low fee for trampoline."
+            );
             return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
 
@@ -150,7 +154,8 @@ where
             trace!(
                 cltv_expiry_relative = req.htlc.cltv_expiry_relative,
                 policy_cltv_expiry_delta = self.routing_policy.cltv_expiry_delta,
-                "Relative cltv expiry too low.");
+                "Relative cltv expiry too low."
+            );
             return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
 
@@ -278,10 +283,9 @@ fn default_response() -> HtlcAcceptedResponse {
 }
 
 #[instrument(
-    skip(payment_provider, payments, payment_ready, fail_requested),
-    fields(
-        payment_hash = %trampoline.invoice.payment_hash(),
-        bolt11 = trampoline.bolt11))]
+    level = "debug",
+    skip(payment_provider, payments, trampoline, payment_ready, fail_requested),
+    fields(payment_hash = %trampoline.invoice.payment_hash()))]
 async fn watch_payment<P>(
     payment_provider: Arc<P>,
     payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
