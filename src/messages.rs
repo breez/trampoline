@@ -30,7 +30,7 @@ pub struct Htlc {
 }
 
 // TODO: Properly serialize
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(tag = "result")]
 pub enum HtlcAcceptedResponse {
     #[serde(rename = "continue")]
@@ -61,6 +61,23 @@ impl HtlcAcceptedResponse {
     pub fn temporary_trampoline_failure(policy: TrampolineRoutingPolicy) -> Self {
         HtlcAcceptedResponse::Fail {
             failure_message: HtlcFailReason::TemporaryTrampolineFailure(policy).encode(),
+        }
+    }
+}
+
+impl std::fmt::Debug for HtlcAcceptedResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Continue { payload } => match payload {
+                Some(payload) => write!(f, "continue {{ payload: {} }}", hex::encode(payload)),
+                None => write!(f, "continue"),
+            },
+            Self::Fail { failure_message } => write!(
+                f,
+                "fail {{ failure_message: {} }}",
+                hex::encode(failure_message)
+            ),
+            Self::Resolve { payment_key: _ } => write!(f, "resolve {{ payment_key: redacted }}"),
         }
     }
 }
@@ -254,21 +271,27 @@ mod serialize_cln_messages_tests {
 
     #[test]
     fn serialize_htlc_accepted_response_continue_with_payload() {
-        let resp = HtlcAcceptedResponse::Continue { payload: Some(vec![1]) };
+        let resp = HtlcAcceptedResponse::Continue {
+            payload: Some(vec![1]),
+        };
         let j = serde_json::to_string(&resp).unwrap();
         assert_eq!(r#"{"result":"continue","payload":"01"}"#, j);
     }
 
     #[test]
     fn serialize_htlc_accepted_resolve() {
-        let resp = HtlcAcceptedResponse::Resolve { payment_key: vec![1] };
+        let resp = HtlcAcceptedResponse::Resolve {
+            payment_key: vec![1],
+        };
         let j = serde_json::to_string(&resp).unwrap();
         assert_eq!(r#"{"result":"resolve","payment_key":"01"}"#, j);
     }
 
     #[test]
     fn serialize_htlc_accepted_response_fail() {
-        let resp = HtlcAcceptedResponse::Fail { failure_message: vec![1] };
+        let resp = HtlcAcceptedResponse::Fail {
+            failure_message: vec![1],
+        };
         let j = serde_json::to_string(&resp).unwrap();
         assert_eq!(r#"{"result":"fail","failure_message":"01"}"#, j);
     }
