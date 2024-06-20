@@ -29,6 +29,9 @@ itest-env:
 	itest-env/bin/python3 -m pip install -U pip
 	itest-env/bin/pip install ./itest
 
+release:
+	cargo build --release
+
 test: utest itest
 
 utest:
