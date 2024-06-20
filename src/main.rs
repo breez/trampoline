@@ -8,6 +8,7 @@ use payment_provider::PayPaymentProvider;
 use plugin::PluginState;
 use tracing::info;
 
+mod cln_plugin;
 mod htlc_manager;
 mod messages;
 mod payment_provider;

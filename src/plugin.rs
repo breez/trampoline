@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     htlc_manager::HtlcManager, messages::HtlcAcceptedRequest, payment_provider::PaymentProvider,
 };
-use cln_plugin::{Builder, Plugin};
+use crate::cln_plugin::{Builder, Plugin};
 use serde_json::Value;
 use tokio::io::{Stdin, Stdout};
 

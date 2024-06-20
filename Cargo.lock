@@ -125,25 +125,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
-name = "cln-plugin"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6b096d2f2a7c58c6faaff1b64281a4c30ff078ec3ca746975fb76ac1a6d6e1f"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "log",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "cln-rpc"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -726,7 +707,6 @@ version = "0.1.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
 dependencies = [
- "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
@@ -789,7 +769,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
- "cln-plugin",
  "cln-rpc",
  "futures",
  "hex",
