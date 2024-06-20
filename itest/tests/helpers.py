@@ -3,10 +3,15 @@ import struct
 from io import BytesIO
 from pyln.testing.utils import wait_for
 from pyln.proto.onion import TlvPayload
-plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
 
-def setup(node_factory):
-    sender, recipient = node_factory.get_nodes(2)
+plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
+hodl_plugin_path = os.path.join(os.path.dirname(__file__), "hodl_plugin.py")
+
+def setup(node_factory, hodl_plugin=False):
+    recipient_opts = {}
+    if hodl_plugin:
+        recipient_opts['plugin'] = hodl_plugin_path
+    sender, recipient = node_factory.get_nodes(2, [{}, recipient_opts])
     trampoline = node_factory.get_node(options={'plugin': plugin_path}, start=False)
     trampoline.daemon.env['CLN_PLUGIN_LOG'] = 'cln_plugin=trace,cln_rpc=trace,cln_grpc=trace,trampoline=trace,debug'
     try:
