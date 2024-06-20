@@ -73,6 +73,9 @@ jobs:
           sudo cp -r "cln/usr" "/"
           rm -rf "clightning-v24.05-Ubuntu-22.04.tar.xz" "cln"
 
+      - name: Install virtualenv
+        run: python -m pip install --user virtualenv
+
       - name: Integration tests
         run: make itest
   
