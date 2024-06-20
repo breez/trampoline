@@ -1,11 +1,24 @@
 import os
 import struct
 from io import BytesIO
-from pyln.testing.fixtures import *
 from pyln.testing.utils import wait_for
 from pyln.proto.onion import TlvPayload
-
 plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
+
+def setup(node_factory):
+    sender, recipient = node_factory.get_nodes(2)
+    trampoline = node_factory.get_node(options={'plugin': plugin_path}, start=False)
+    trampoline.daemon.env['CLN_PLUGIN_LOG'] = 'cln_plugin=trace,cln_rpc=trace,cln_grpc=trace,trampoline=trace,debug'
+    try:
+        trampoline.start(True)
+    except Exception:
+        trampoline.daemon.stop()
+        raise
+    sender.openchannel(trampoline, 1000000)
+    trampoline.openchannel(recipient, 1000000)
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in sender.rpc.listpeerchannels()['channels']))
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']))
+    return sender, trampoline, recipient
 
 def send_onion(sender, trampoline, invoice, amount_msat, total_msat, delay=576):
     def truncate_encode(i: int):
