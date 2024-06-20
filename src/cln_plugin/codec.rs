@@ -133,7 +133,7 @@ mod test {
     #[test]
     fn test_separator() {
         struct Test(String, Option<usize>);
-        let tests = vec![
+        let tests = [
             Test("".to_string(), None),
             Test("}\n\n".to_string(), Some(1)),
             Test("\"hello\"},\n\"world\"}\n\n".to_string(), Some(18)),
@@ -178,7 +178,7 @@ mod test {
 
     #[test]
     fn test_ml_encoder() {
-        let tests = vec!["test"];
+        let tests = ["test"];
 
         for t in tests.iter() {
             let mut buf = BytesMut::new();
@@ -194,7 +194,7 @@ mod test {
 
     #[test]
     fn test_json_codec() {
-        let tests = vec![json!({"hello": "world"})];
+        let tests = [json!({"hello": "world"})];
 
         for t in tests.iter() {
             let mut codec = JsonCodec::default();

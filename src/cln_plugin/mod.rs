@@ -935,6 +935,6 @@ mod test {
     async fn init() {
         let state = ();
         let builder = Builder::new(tokio::io::stdin(), tokio::io::stdout());
-        let _ = builder.start(state);
+        std::mem::drop(builder.start(state));
     }
 }
