@@ -22,6 +22,7 @@ where
     mpp_timeout: Duration,
     payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
     payment_provider: Arc<P>,
+    allow_self_route_hints: bool,
 }
 
 impl<P> HtlcManager<P>
@@ -33,6 +34,7 @@ where
         routing_policy: TrampolineRoutingPolicy,
         mpp_timeout: Duration,
         payment_provider: Arc<P>,
+        allow_self_route_hints: bool,
     ) -> Self {
         Self {
             local_pubkey,
@@ -40,6 +42,7 @@ where
             mpp_timeout,
             payments: Arc::new(Mutex::new(HashMap::new())),
             payment_provider,
+            allow_self_route_hints,
         }
     }
 
@@ -181,10 +184,12 @@ where
                 }
             };
 
-            debug!(
-                "Got invoice with ourselves in the hint. Erroring because this is not supported."
-            );
-            return HtlcCheckResult::Response(HtlcAcceptedResponse::temporary_node_failure());
+            if !self.allow_self_route_hints {
+                debug!(
+                    "Got invoice with ourselves in the hint. Erroring because this is not supported."
+                );
+                return HtlcCheckResult::Response(HtlcAcceptedResponse::temporary_node_failure());
+            }
         }
 
         debug!("This is a trampoline payment.");
@@ -496,6 +501,7 @@ mod tests {
             policy(),
             mpp_timeout(),
             Arc::new(payment_provider),
+            true,
         )
     }
 
