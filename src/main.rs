@@ -76,7 +76,7 @@ async fn main() -> Result<(), Error> {
     let fee_base_msat = cp.option(&option_fee_base_msat)?.try_into()?;
     let fee_proportional_millionths = cp.option(&option_fee_ppm)?.try_into()?;
     let mpp_timeout_secs = cp.option(&option_mpp_timeout)?.try_into()?;
-    let allow_self_route_hints: bool = !cp.option(&option_no_self_route_hints)?.try_into()?;
+    let allow_self_route_hints: bool = !cp.option(&option_no_self_route_hints)?;
     let policy = TrampolineRoutingPolicy {
         cltv_expiry_delta,
         fee_base_msat,

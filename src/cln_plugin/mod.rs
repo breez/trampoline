@@ -149,6 +149,7 @@ where
         self
     }
 
+    #[allow(dead_code)]
     pub fn notification(mut self, notif: messages::NotificationTopic) -> Builder<S, I, O> {
         self.notifications.push(notif);
         self
@@ -172,6 +173,7 @@ where
     /// let b = Builder::new(tokio::io::stdin(), tokio::io::stdout())
     ///     .subscribe("connect", connect_handler);
     /// ```
+    #[allow(dead_code)]
     pub fn subscribe<C, F>(mut self, topic: &str, callback: C) -> Builder<S, I, O>
     where
         C: Send + Sync + 'static,
@@ -191,6 +193,7 @@ where
     }
 
     /// Add a subscription to a given `hookname`
+    #[allow(dead_code)]
     pub fn hook<C, F>(mut self, hookname: &str, callback: C) -> Self
     where
         C: Send + Sync + 'static,
@@ -208,6 +211,7 @@ where
 
     /// Register a custom RPC method for the RPC passthrough from the
     /// main daemon
+    #[allow(dead_code)]
     pub fn rpcmethod<C, F>(mut self, name: &str, description: &str, callback: C) -> Builder<S, I, O>
     where
         C: Send + Sync + 'static,
@@ -226,6 +230,7 @@ where
         self
     }
 
+    #[allow(dead_code)]
     pub fn rpcmethod_from_builder(mut self, rpc_method: RpcMethodBuilder<S>) -> Builder<S, I, O> {
         self.rpcmethods
             .insert(rpc_method.name.to_string(), rpc_method.build());
@@ -233,6 +238,7 @@ where
     }
 
     /// Register a callback for setconfig to accept changes for dynamic options
+    #[allow(dead_code)]
     pub fn setconfig_callback<C, F>(mut self, setconfig_callback: C) -> Builder<S, I, O>
     where
         C: Send + Sync + 'static,
@@ -244,12 +250,14 @@ where
     }
 
     /// Send true value for "dynamic" field in "getmanifest" response
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Builder<S, I, O> {
         self.dynamic = true;
         self
     }
 
     /// Sets the "featurebits" in the "getmanifest" response
+    #[allow(dead_code)]
     pub fn featurebits(mut self, kind: FeatureBitsKind, hex: String) -> Self {
         match kind {
             FeatureBitsKind::Node => self.featurebits.node = Some(hex),
@@ -266,6 +274,7 @@ where
     /// that'll interfere with the plugin communication. See the CLN
     /// documentation on logging to see what logging events should
     /// look like.
+    #[allow(dead_code)]
     pub fn with_logging(mut self, log: bool) -> Builder<S, I, O> {
         self.logging = log;
         self
@@ -273,6 +282,7 @@ where
 
     /// Tells lightningd explicitly to allow custommmessages of the provided
     /// type
+    #[allow(dead_code)]
     pub fn custommessages(mut self, custommessages: Vec<u16>) -> Self {
         self.custommessages = custommessages;
         self
@@ -327,7 +337,7 @@ where
         };
         let (init_id, configuration) = match input.next().await {
             Some(Ok(messages::JsonRpc::Request(id, messages::Request::Init(m)))) => {
-                (id, self.handle_init(m)?)
+                (id, self.handle_init(*m)?)
             }
 
             Some(o) => return Err(anyhow!("Got unexpected message {:?} from lightningd", o)),
@@ -378,6 +388,7 @@ where
     /// `Plugin` instance and return `None` instead. This signals that
     /// we should exit, and not continue running. `start()` returns in
     /// order to allow user code to perform cleanup if necessary.
+    #[allow(dead_code)]
     pub async fn start(self, state: S) -> Result<Option<Plugin<S>>, anyhow::Error> {
         if let Some(cp) = self.configure().await? {
             Ok(Some(cp.start(state).await?))
@@ -403,14 +414,14 @@ where
         let subscriptions = self
             .subscriptions
             .keys()
-            .map(|s| s.clone())
+            .cloned()
             .chain(self.wildcard_subscription.iter().map(|_| String::from("*")))
             .collect();
 
         messages::GetManifestResponse {
             options: self.options.values().cloned().collect(),
             subscriptions,
-            hooks: self.hooks.keys().map(|s| s.clone()).collect(),
+            hooks: self.hooks.keys().cloned().collect(),
             rpcmethods,
             notifications: self.notifications.clone(),
             featurebits: self.featurebits.clone(),
@@ -449,6 +460,7 @@ impl<S> RpcMethodBuilder<S>
 where
     S: Send + Clone,
 {
+    #[allow(dead_code)]
     pub fn new<C, F>(name: &str, callback: C) -> Self
     where
         C: Send + Sync + 'static,
@@ -463,16 +475,19 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub fn description(mut self, description: &str) -> Self {
         self.description = Some(description.to_string());
         self
     }
 
+    #[allow(dead_code)]
     pub fn usage(mut self, usage: &str) -> Self {
         self.usage = Some(usage.to_string());
         self
     }
 
+    #[allow(dead_code)]
     fn build(self) -> RpcMethod<S> {
         RpcMethod {
             callback: self.callback,
@@ -508,6 +523,7 @@ where
     usage: String,
 }
 
+#[allow(dead_code)]
 pub struct RpcMethodBuilder<S>
 where
     S: Clone + Send,
@@ -536,6 +552,7 @@ impl<S> Plugin<S>
 where
     S: Clone + Send,
 {
+    #[allow(dead_code)]
     pub fn option_str(&self, name: &str) -> Result<Option<options::Value>> {
         self.option_values
             .lock()
@@ -545,6 +562,7 @@ where
             .cloned()
     }
 
+    #[allow(dead_code)]
     pub fn option<'a, OV: OptionType<'a>>(
         &self,
         config_option: &options::ConfigOption<'a, OV>,
@@ -553,6 +571,7 @@ where
         Ok(OV::from_value(&value))
     }
 
+    #[allow(dead_code)]
     pub fn set_option_str(&self, name: &str, value: options::Value) -> Result<()> {
         *self
             .option_values
@@ -563,6 +582,7 @@ where
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn set_option<'a, OV: OptionType<'a>>(
         &self,
         config_option: &options::ConfigOption<'a, OV>,
@@ -638,6 +658,7 @@ where
     /// Abort the plugin startup. Communicate that we're about to exit
     /// voluntarily, and this is not an error.
     #[allow(unused_mut)]
+    #[allow(dead_code)]
     pub async fn disable(mut self, reason: &str) -> Result<(), anyhow::Error> {
         self.output
             .lock()
@@ -660,7 +681,7 @@ where
         self.option_values
             .get(name)
             .ok_or(anyhow!("No option named '{}'", name))
-            .map(|c| c.clone())
+            .cloned()
     }
 
     pub fn option<'a, OV: OptionType<'a>>(
@@ -699,17 +720,13 @@ where
             // the user-code, which may require some cleanups or
             // similar.
             tokio::select! {
-                    e = self.dispatch_one(&mut input, &self.plugin) => {
-                        if let Err(e) = e {
-                return Err(e)
-                        }
-            },
-            v = receiver.recv() => {
-                        output.lock().await.send(
-                v.context("internal communication error")?
-                        ).await?;
-            },
-                }
+                e = self.dispatch_one(&mut input, &self.plugin) => e?,
+                v = receiver.recv() => {
+                            output.lock().await.send(
+                    v.context("internal communication error")?
+                            ).await?;
+                },
+            }
         }
     }
 
@@ -832,9 +849,11 @@ impl<S> Plugin<S>
 where
     S: Clone + Send,
 {
+    #[allow(dead_code)]
     pub fn options(&self) -> Vec<UntypedConfigOption> {
         self.options.values().cloned().collect()
     }
+    #[allow(dead_code)]
     pub fn configuration(&self) -> Configuration {
         self.configuration.clone()
     }
@@ -847,6 +866,7 @@ impl<S> Plugin<S>
 where
     S: Send + Clone,
 {
+    #[allow(dead_code)]
     pub async fn send_custom_notification(
         &self,
         method: String,
@@ -873,6 +893,7 @@ where
     }
 
     /// Request plugin shutdown
+    #[allow(dead_code)]
     pub fn shutdown(&self) -> Result<(), Error> {
         self.wait_handle
             .send(())
@@ -881,6 +902,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub enum FeatureBitsKind {
     Node,
     Channel,

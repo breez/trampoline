@@ -67,7 +67,7 @@ pub async fn init<O>(out: Arc<Mutex<FramedWrite<O, JsonCodec>>>) -> Result<(), a
 where
     O: AsyncWrite + Send + Unpin + 'static,
 {
-    return trace::init(out).context("initializing tracing logger");
+    trace::init(out).context("initializing tracing logger")
 }
 
 mod trace {
@@ -133,13 +133,11 @@ mod trace {
         }
 
         fn on_enter(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-            if let Some(span) = self.spans.lock().unwrap().get(id) {
-                if let Some(span) = span {
-                    self.context
-                        .lock()
-                        .unwrap()
-                        .insert(id.clone(), span.clone());
-                }
+            if let Some(Some(span)) = self.spans.lock().unwrap().get(id) {
+                self.context
+                    .lock()
+                    .unwrap()
+                    .insert(id.clone(), span.clone());
             }
         }
 
@@ -164,10 +162,10 @@ mod trace {
                 .unwrap()
                 .iter()
                 .map(|f| f.1)
-                .map(|f| f.clone())
+                .cloned()
                 .collect::<Vec<String>>()
                 .join(", ");
-            if spanmsg != "" {
+            if !spanmsg.is_empty() {
                 message.push_str(", ");
                 message.push_str(&spanmsg);
             }
@@ -178,12 +176,12 @@ mod trace {
 
     impl From<&Level> for LogLevel {
         fn from(l: &Level) -> LogLevel {
-            match l {
-                &Level::DEBUG => LogLevel::Debug,
-                &Level::ERROR => LogLevel::Error,
-                &Level::INFO => LogLevel::Info,
-                &Level::WARN => LogLevel::Warn,
-                &Level::TRACE => LogLevel::Debug,
+            match *l {
+                Level::DEBUG => LogLevel::Debug,
+                Level::ERROR => LogLevel::Error,
+                Level::INFO => LogLevel::Info,
+                Level::WARN => LogLevel::Warn,
+                Level::TRACE => LogLevel::Debug,
             }
         }
     }

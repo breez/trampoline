@@ -11,7 +11,7 @@ use std::fmt::Debug;
 pub(crate) enum Request {
     // Builtin
     Getmanifest(GetManifestCall),
-    Init(InitCall),
+    Init(Box<InitCall>),
     // Hooks
     //     PeerConnected,
     //     CommitmentRevocation,
@@ -69,26 +69,36 @@ pub(crate) struct InitCall {
 #[derive(Clone, Deserialize, Debug)]
 pub struct Configuration {
     #[serde(rename = "lightning-dir")]
+    #[allow(dead_code)]
     pub lightning_dir: String,
     #[serde(rename = "rpc-file")]
     pub rpc_file: String,
+    #[allow(dead_code)]
     pub startup: bool,
+    #[allow(dead_code)]
     pub network: String,
+    #[allow(dead_code)]
     pub feature_set: HashMap<String, String>,
 
     // The proxy related options are only populated if a proxy was
     // configured.
+    #[allow(dead_code)]
     pub proxy: Option<ProxyInfo>,
     #[serde(rename = "torv3-enabled")]
+    #[allow(dead_code)]
     pub torv3_enabled: Option<bool>,
+    #[allow(dead_code)]
     pub always_use_proxy: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ProxyInfo {
     #[serde(alias = "type")]
+    #[allow(dead_code)]
     pub typ: String,
+    #[allow(dead_code)]
     pub address: String,
+    #[allow(dead_code)]
     pub port: i64,
 }
 
@@ -156,12 +166,14 @@ pub struct NotificationTopic {
 }
 
 impl NotificationTopic {
+    #[allow(dead_code)]
     pub fn method(&self) -> &str {
         &self.method
     }
 }
 
 impl NotificationTopic {
+    #[allow(dead_code)]
     pub fn new(method: &str) -> Self {
         Self {
             method: method.to_string(),
@@ -201,6 +213,7 @@ pub struct InitResponse {
     pub disable: Option<String>,
 }
 
+#[allow(dead_code)]
 pub trait Response: Serialize + Debug {}
 
 #[cfg(test)]

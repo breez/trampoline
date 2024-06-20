@@ -363,15 +363,17 @@ impl Value {
     ///
     /// For any Value on which `is_string` returns true, `as_str` is guaranteed
     /// to return the string slice.
+    #[allow(dead_code)]
     pub fn is_string(&self) -> bool {
         self.as_str().is_some()
     }
 
     /// If the `Value` is a String, returns the associated str. Returns None
     /// otherwise.
+    #[allow(dead_code)]
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            Value::String(s) => Some(&s),
+            Value::String(s) => Some(s),
             Value::Integer(_) => None,
             Value::Boolean(_) => None,
         }
@@ -382,12 +384,14 @@ impl Value {
     ///
     /// For any Value on which `is_i64` returns true, `as_i64` is guaranteed to
     /// return the integer value.
+    #[allow(dead_code)]
     pub fn is_i64(&self) -> bool {
         self.as_i64().is_some()
     }
 
     /// If the `Value` is an integer, represent it as i64. Returns
     /// None otherwise.
+    #[allow(dead_code)]
     pub fn as_i64(&self) -> Option<i64> {
         match *self {
             Value::Integer(n) => Some(n),
@@ -399,12 +403,14 @@ impl Value {
     ///
     /// For any Value on which `is_boolean` returns true, `as_bool` is
     /// guaranteed to return the boolean value.
+    #[allow(dead_code)]
     pub fn is_boolean(&self) -> bool {
         self.as_bool().is_some()
     }
 
     /// If the `Value` is a Boolean, returns the associated bool. Returns None
     /// otherwise.
+    #[allow(dead_code)]
     pub fn as_bool(&self) -> Option<bool> {
         match *self {
             Value::Boolean(b) => Some(b),
@@ -438,19 +444,21 @@ impl<'a, V: OptionType<'a>> ConfigOption<'a, V> {
 }
 
 impl<'a> DefaultStringConfigOption<'a> {
+    #[allow(dead_code)]
     pub const fn new_str_with_default(
         name: &'a str,
         default: &'a str,
         description: &'a str,
     ) -> Self {
         Self {
-            name: name,
-            default: default,
-            description: description,
+            name,
+            default,
+            description,
             deprecated: false,
             dynamic: false,
         }
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -458,15 +466,17 @@ impl<'a> DefaultStringConfigOption<'a> {
 }
 
 impl<'a> StringConfigOption<'a> {
+    #[allow(dead_code)]
     pub const fn new_str_no_default(name: &'a str, description: &'a str) -> Self {
         Self {
             name,
             default: (),
-            description: description,
+            description,
             deprecated: false,
             dynamic: false,
         }
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -476,13 +486,14 @@ impl<'a> StringConfigOption<'a> {
 impl<'a> DefaultIntegerConfigOption<'a> {
     pub const fn new_i64_with_default(name: &'a str, default: i64, description: &'a str) -> Self {
         Self {
-            name: name,
-            default: default,
-            description: description,
+            name,
+            default,
+            description,
             deprecated: false,
             dynamic: false,
         }
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -490,15 +501,17 @@ impl<'a> DefaultIntegerConfigOption<'a> {
 }
 
 impl<'a> IntegerConfigOption<'a> {
+    #[allow(dead_code)]
     pub const fn new_i64_no_default(name: &'a str, description: &'a str) -> Self {
         Self {
-            name: name,
+            name,
             default: (),
-            description: description,
+            description,
             deprecated: false,
             dynamic: false,
         }
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -506,6 +519,7 @@ impl<'a> IntegerConfigOption<'a> {
 }
 
 impl<'a> BooleanConfigOption<'a> {
+    #[allow(dead_code)]
     pub const fn new_bool_no_default(name: &'a str, description: &'a str) -> Self {
         Self {
             name,
@@ -515,6 +529,7 @@ impl<'a> BooleanConfigOption<'a> {
             dynamic: false,
         }
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -522,15 +537,17 @@ impl<'a> BooleanConfigOption<'a> {
 }
 
 impl<'a> DefaultBooleanConfigOption<'a> {
+    #[allow(dead_code)]
     pub const fn new_bool_with_default(name: &'a str, default: bool, description: &'a str) -> Self {
         Self {
             name,
             description,
-            default: default,
+            default,
             deprecated: false,
             dynamic: false,
         }
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -547,6 +564,7 @@ impl<'a> FlagConfigOption<'a> {
             dynamic: false,
         }
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -554,7 +572,7 @@ impl<'a> FlagConfigOption<'a> {
 }
 
 fn is_false(b: &bool) -> bool {
-    *b == false
+    !(*b)
 }
 
 /// An stringly typed option that is passed to
@@ -572,12 +590,14 @@ pub struct UntypedConfigOption {
 }
 
 impl UntypedConfigOption {
+    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         &self.name
     }
     pub fn default(&self) -> &Option<Value> {
         &self.default
     }
+    #[allow(dead_code)]
     pub fn dynamic(mut self) -> Self {
         self.dynamic = true;
         self
@@ -589,11 +609,12 @@ where
     V: OptionType<'a>,
 {
     pub fn name(&self) -> &str {
-        &self.name
+        self.name
     }
 
+    #[allow(dead_code)]
     pub fn description(&self) -> &str {
-        &self.description
+        self.description
     }
 }
 
