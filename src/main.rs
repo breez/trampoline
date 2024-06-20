@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Error;
-use cln_plugin::options::ConfigOption;
+use cln_plugin::options::{ConfigOption, DefaultIntegerConfigOption, FlagConfigOption};
 use cln_rpc::model::{requests::GetinfoRequest, responses::GetinfoResponse};
 use htlc_manager::HtlcManager;
 use messages::TrampolineRoutingPolicy;
@@ -16,52 +16,47 @@ mod payment_provider;
 mod plugin;
 mod tlv;
 
-const OPTION_CLTV_EXPIRY_DELTA: &str = "trampoline-cltv-expiry-delta";
-const OPTION_FEE_BASE_MSAT: &str = "trampoline-fee-base-msat";
-const OPTION_FEE_PPM: &str = "trampoline-fee-ppm";
-const OPTION_MPP_TIMEOUT: &str = "trampoline-mpp-timeout";
-const OPTION_NO_SELF_ROUTE_HINTS: &str = "trampoline-no-self-route-hints";
+// TODO: Find a sane default for the cltv expiry delta.
+const OPTION_CLTV_EXPIRY_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    "trampoline-cltv-expiry-delta",
+    576,
+    "Cltv expiry delta for the trampoline routing policy. Any routes
+    where the total cltv delta is lower than this number will not be
+    tried.",
+);
+// TODO: A zero base fee default may exclude many routes for small payments.
+const OPTION_FEE_BASE_MSAT: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    "trampoline-fee-base-msat",
+    0,
+    "Base fee in millisatoshi charged for trampoline payments.",
+);
+const OPTION_FEE_PPM: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    "trampoline-fee-ppm",
+    5000,
+    "Fee rate in parts per million charges for trampoline payments.",
+);
+const OPTION_MPP_TIMEOUT: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    "trampoline-mpp-timeout",
+    60,
+    "Timeout in seconds before multipart htlcs that don't add up to the
+    payment amount are failed back to the sender.",
+);
+const OPTION_NO_SELF_ROUTE_HINTS: FlagConfigOption = ConfigOption::new_flag(
+    "trampoline-no-self-route-hints",
+    "If this flag is set, invoices where the current node is in an 
+    invoice route hint are not supported. This can be useful if there
+    are other important plugins acting only on forwards. The trampoline
+    plugin will 'receive' and 'pay', so has different dynamics.",
+);
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // TODO: Find a sane default for the cltv expiry delta.
-    let option_cltv_expiry_delta = ConfigOption::new_i64_with_default(
-        OPTION_CLTV_EXPIRY_DELTA,
-        576,
-        "Cltv expiry delta for the trampoline routing policy. Any routes
-        where the total cltv delta is lower than this number will not be
-        tried.",
-    );
-    // TODO: A zero base fee default may exclude many routes for small payments.
-    let option_fee_base_msat = ConfigOption::new_i64_with_default(
-        OPTION_FEE_BASE_MSAT,
-        0,
-        "Base fee in millisatoshi charged for trampoline payments.",
-    );
-    let option_fee_ppm = ConfigOption::new_i64_with_default(
-        OPTION_FEE_PPM,
-        5000,
-        "Fee rate in parts per million charges for trampoline payments.",
-    );
-    let option_mpp_timeout = ConfigOption::new_i64_with_default(
-        OPTION_MPP_TIMEOUT,
-        60,
-        "Timeout in seconds before multipart htlcs that don't add up to the
-        payment amount are failed back to the sender.",
-    );
-    let option_no_self_route_hints = ConfigOption::new_flag(
-        OPTION_NO_SELF_ROUTE_HINTS,
-        "If this flag is set, invoices where the current node is in an 
-        invoice route hint are not supported. This can be useful if there
-        are other important plugins acting only on forwards. The trampoline
-        plugin will 'receive' and 'pay', so has different dynamics.",
-    );
-
     let builder = plugin::init::<PayPaymentProvider>()
-        .option(option_cltv_expiry_delta.clone())
-        .option(option_fee_base_msat.clone())
-        .option(option_fee_ppm.clone())
-        .option(option_mpp_timeout.clone())
-        .option(option_no_self_route_hints.clone());
+        .option(OPTION_CLTV_EXPIRY_DELTA.clone())
+        .option(OPTION_FEE_BASE_MSAT.clone())
+        .option(OPTION_FEE_PPM.clone())
+        .option(OPTION_MPP_TIMEOUT.clone())
+        .option(OPTION_NO_SELF_ROUTE_HINTS.clone());
 
     let cp = match builder.configure().await? {
         Some(cp) => cp,
@@ -72,11 +67,11 @@ async fn main() -> Result<(), Error> {
     let mut rpc = cln_rpc::ClnRpc::new(rpc_file.clone()).await?;
     let info: GetinfoResponse = rpc.call_typed(&GetinfoRequest {}).await?;
 
-    let cltv_expiry_delta = cp.option(&option_cltv_expiry_delta)?.try_into()?;
-    let fee_base_msat = cp.option(&option_fee_base_msat)?.try_into()?;
-    let fee_proportional_millionths = cp.option(&option_fee_ppm)?.try_into()?;
-    let mpp_timeout_secs = cp.option(&option_mpp_timeout)?.try_into()?;
-    let allow_self_route_hints: bool = !cp.option(&option_no_self_route_hints)?;
+    let cltv_expiry_delta = cp.option(&OPTION_CLTV_EXPIRY_DELTA)?.try_into()?;
+    let fee_base_msat = cp.option(&OPTION_FEE_BASE_MSAT)?.try_into()?;
+    let fee_proportional_millionths = cp.option(&OPTION_FEE_PPM)?.try_into()?;
+    let mpp_timeout_secs = cp.option(&OPTION_MPP_TIMEOUT)?.try_into()?;
+    let allow_self_route_hints: bool = !cp.option(&OPTION_NO_SELF_ROUTE_HINTS)?;
     let policy = TrampolineRoutingPolicy {
         cltv_expiry_delta,
         fee_base_msat,
