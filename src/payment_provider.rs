@@ -1,15 +1,19 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use cln_rpc::{
     model::{requests::PayRequest, responses::PayStatus},
     primitives::Amount,
-    ClnRpc,
 };
 #[cfg(test)]
 use mockall::automock;
 use tracing::{instrument, warn};
+
+use crate::rpc::Rpc;
 
 /// The `PaymentProvider` trait exposes a `pay` method.
 #[cfg_attr(test, automock)]
@@ -23,12 +27,12 @@ pub trait PaymentProvider {
 
 #[derive(Clone)]
 pub struct PayPaymentProvider {
-    socket_path: String,
+    rpc: Arc<Rpc>,
 }
 
 impl PayPaymentProvider {
-    pub fn new(socket_path: String) -> Self {
-        Self { socket_path }
+    pub fn new(rpc: Arc<Rpc>) -> Self {
+        Self { rpc }
     }
 }
 
@@ -36,17 +40,13 @@ impl PayPaymentProvider {
 impl PaymentProvider for PayPaymentProvider {
     #[instrument(level = "trace", skip(self))]
     async fn pay(&self, req: PaymentRequest) -> Result<Vec<u8>> {
-        // TODO: This creates a new unix socket connection for every payment.
-        // Also, does this cause different requests to steal eachothers
-        // responses in high parallelism?
-        let mut cln = ClnRpc::new(self.socket_path.clone()).await?;
-
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let label = format!("trampoline-{}-{}", req.bolt11, now);
 
         // TODO: extract the failure reason here?
-        let resp = cln
-            .call_typed(&PayRequest {
+        let resp = self
+            .rpc
+            .pay(&PayRequest {
                 amount_msat: req.amount_msat.map(Amount::from_msat),
                 bolt11: req.bolt11,
                 label: Some(label),

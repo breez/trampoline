@@ -106,7 +106,7 @@ async fn main() -> Result<(), Error> {
     };
 
     let mpp_timeout = Duration::from_secs(mpp_timeout_secs);
-    let payment_provider = Arc::new(PayPaymentProvider::new(rpc_file));
+    let payment_provider = Arc::new(PayPaymentProvider::new(Arc::clone(&rpc)));
     let mut block_watcher = BlockWatcher::new(Arc::clone(&rpc));
     let (sender, receiver) = mpsc::channel(1);
     let block_join = block_watcher.start(receiver).await?;
