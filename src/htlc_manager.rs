@@ -76,7 +76,7 @@ where
         let (sender, receiver) = oneshot::channel();
         let trampoline = match self.check_htlc(req) {
             HtlcCheckResult::Response(resp) => return resp,
-            HtlcCheckResult::Trampoline(trampoline) => trampoline,
+            HtlcCheckResult::Trampoline(trampoline) => *trampoline,
         };
 
         {
@@ -88,16 +88,16 @@ where
                     let (s2, r2) = mpsc::channel(1);
                     tokio::spawn(watch_payment(
                         Arc::clone(&self.params),
-                        *trampoline.clone(),
+                        trampoline.clone(),
                         r1,
                         r2,
                     ));
-                    PaymentState::new(*trampoline.clone(), s1, s2)
+                    PaymentState::new(trampoline.clone(), s1, s2)
                 });
 
             // If the trampoline info doesn't match previous trampoline infos,
             // fail the payment asap.
-            if *trampoline != payment_state.trampoline {
+            if trampoline != payment_state.trampoline {
                 trace!("Trampoline info doesn't match existing trampoline info for payment.");
                 payment_state
                     .fail(self.temporary_trampoline_failure())
