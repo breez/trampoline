@@ -1,39 +1,56 @@
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Error;
+use anyhow::{anyhow, Error};
+use block_watcher::BlockWatcher;
 use cln_plugin::options::{ConfigOption, DefaultIntegerConfigOption, FlagConfigOption};
-use cln_rpc::model::{requests::GetinfoRequest, responses::GetinfoResponse};
 use htlc_manager::HtlcManager;
 use messages::TrampolineRoutingPolicy;
 use payment_provider::PayPaymentProvider;
 use plugin::PluginState;
+use rpc::Rpc;
+use tokio::sync::mpsc;
 use tracing::info;
 
+mod block_watcher;
 mod cln_plugin;
 mod htlc_manager;
 mod messages;
 mod payment_provider;
 mod plugin;
+mod rpc;
 mod tlv;
 
+const NAME_CLTV_DELTA: &str = "trampoline-cltv-delta";
+const OPTION_CLTV_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    NAME_CLTV_DELTA,
+    34,
+    "The number of blocks between incoming payments and outgoing payments: \
+    this needs to be enough to make sure that if we have to, we can close the \
+    outgoing payment before the incoming, or redeem the incoming once the \
+    outgoing is redeemed.",
+);
 // TODO: Find a sane default for the cltv expiry delta.
-const OPTION_CLTV_EXPIRY_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
-    "trampoline-cltv-expiry-delta",
+const NAME_POLICY_CLTV_DELTA: &str = "trampoline-policy-cltv-delta";
+const OPTION_POLICY_CLTV_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    NAME_POLICY_CLTV_DELTA,
     576,
     "Cltv expiry delta for the trampoline routing policy. Any routes where the \
     total cltv delta is lower than this number will not be tried.",
 );
 // TODO: A zero base fee default may exclude many routes for small payments.
-const OPTION_FEE_BASE_MSAT: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
-    "trampoline-fee-base-msat",
+const OPTION_POLICY_FEE_BASE: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    "trampoline-policy-fee-base",
     0,
-    "Base fee in millisatoshi charged for trampoline payments.",
+    "The base fee to charge for every trampoline payment which passes through.",
 );
-const OPTION_FEE_PPM: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
-    "trampoline-fee-ppm",
-    5000,
-    "Fee rate in parts per million charges for trampoline payments.",
-);
+const OPTION_POLICY_FEE_PER_SATOSHI: DefaultIntegerConfigOption =
+    ConfigOption::new_i64_with_default(
+        "trampoline-policy-fee-per-satoshi",
+        5000,
+        "This is the proportional fee to charge for every trampoline payment which \
+    passes through. As percentages are too coarse, it's in millionths, so \
+    10000 is 1%, 1000 is 0.1%.",
+    );
 const OPTION_MPP_TIMEOUT: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
     "trampoline-mpp-timeout",
     60,
@@ -51,11 +68,12 @@ const OPTION_NO_SELF_ROUTE_HINTS: FlagConfigOption = ConfigOption::new_flag(
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let builder = plugin::init::<PayPaymentProvider>()
-        .option(OPTION_CLTV_EXPIRY_DELTA.clone())
-        .option(OPTION_FEE_BASE_MSAT.clone())
-        .option(OPTION_FEE_PPM.clone())
-        .option(OPTION_MPP_TIMEOUT.clone())
-        .option(OPTION_NO_SELF_ROUTE_HINTS.clone());
+        .option(OPTION_CLTV_DELTA)
+        .option(OPTION_POLICY_CLTV_DELTA)
+        .option(OPTION_POLICY_FEE_BASE)
+        .option(OPTION_POLICY_FEE_PER_SATOSHI)
+        .option(OPTION_MPP_TIMEOUT)
+        .option(OPTION_NO_SELF_ROUTE_HINTS);
 
     let cp = match builder.configure().await? {
         Some(cp) => cp,
@@ -63,12 +81,22 @@ async fn main() -> Result<(), Error> {
     };
 
     let rpc_file = cp.configuration().rpc_file;
-    let mut rpc = cln_rpc::ClnRpc::new(rpc_file.clone()).await?;
-    let info: GetinfoResponse = rpc.call_typed(&GetinfoRequest {}).await?;
+    let rpc = Arc::new(Rpc::new(rpc_file.clone()));
+    let info = rpc.get_info().await?;
 
-    let cltv_expiry_delta = cp.option(&OPTION_CLTV_EXPIRY_DELTA)?.try_into()?;
-    let fee_base_msat = cp.option(&OPTION_FEE_BASE_MSAT)?.try_into()?;
-    let fee_proportional_millionths = cp.option(&OPTION_FEE_PPM)?.try_into()?;
+    let cltv_delta = cp.option(&OPTION_CLTV_DELTA)?.try_into()?;
+    let cltv_expiry_delta = cp.option(&OPTION_POLICY_CLTV_DELTA)?.try_into()?;
+    if cltv_expiry_delta <= cltv_delta {
+        return Err(anyhow!(
+            "{} ({}) must be greater than {} ({})",
+            NAME_POLICY_CLTV_DELTA,
+            cltv_expiry_delta,
+            NAME_CLTV_DELTA,
+            cltv_delta,
+        ));
+    }
+    let fee_base_msat = cp.option(&OPTION_POLICY_FEE_BASE)?.try_into()?;
+    let fee_proportional_millionths = cp.option(&OPTION_POLICY_FEE_PER_SATOSHI)?.try_into()?;
     let mpp_timeout_secs = cp.option(&OPTION_MPP_TIMEOUT)?.try_into()?;
     let allow_self_route_hints: bool = !cp.option(&OPTION_NO_SELF_ROUTE_HINTS)?;
     let policy = TrampolineRoutingPolicy {
@@ -79,18 +107,26 @@ async fn main() -> Result<(), Error> {
 
     let mpp_timeout = Duration::from_secs(mpp_timeout_secs);
     let payment_provider = Arc::new(PayPaymentProvider::new(rpc_file));
-    let htlc_manager = HtlcManager::new(
+    let mut block_watcher = BlockWatcher::new(Arc::clone(&rpc));
+    let (sender, receiver) = mpsc::channel(1);
+    let block_join = block_watcher.start(receiver).await?;
+    let block_watcher = Arc::new(block_watcher);
+    let htlc_manager = Arc::new(HtlcManager::new(
         info.id,
         policy,
         mpp_timeout,
+        cltv_delta,
         payment_provider,
+        Arc::clone(&block_watcher),
         allow_self_route_hints,
-    );
-    let state = PluginState::new(htlc_manager);
+    ));
+    let state = PluginState::new(Arc::clone(&block_watcher), Arc::clone(&htlc_manager));
     let plugin = cp.start(state.clone()).await?;
 
     info!("Trampoline plugin started");
 
     plugin.join().await?;
+    sender.send(()).await?;
+    block_join.await?;
     Ok(())
 }

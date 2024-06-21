@@ -11,9 +11,13 @@ use cln_rpc::{
 use mockall::automock;
 use tracing::{instrument, warn};
 
+/// The `PaymentProvider` trait exposes a `pay` method.
 #[cfg_attr(test, automock)]
 #[async_trait]
 pub trait PaymentProvider {
+    /// `pay` pays the specified invoice. If a payment for this invoice is
+    /// already in-flight, it returns when that payment is done. The return
+    /// value is the preimage, if successful.
     async fn pay(&self, req: PaymentRequest) -> Result<Vec<u8>>;
 }
 
@@ -49,7 +53,7 @@ impl PaymentProvider for PayPaymentProvider {
                 riskfactor: Some(20.0),
                 maxfeepercent: None,
                 retry_for: Some(30),
-                maxdelay: None,
+                maxdelay: Some(req.max_cltv_delta),
                 exemptfee: None,
                 localinvreqid: None,
                 exclude: None,
@@ -82,9 +86,15 @@ impl PaymentProvider for PayPaymentProvider {
     }
 }
 
+/// `PaymentRequest` defines the payment parameters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaymentRequest {
+    /// The bolt11 invoice to pay.
     pub bolt11: String,
+    /// Should only be set if `bolt11` is a zero-amount invoice.
     pub amount_msat: Option<u64>,
+    /// The maximum fee for the chosen route in millisatoshi.
     pub max_fee_msat: u64,
+    /// The maximum delay in the chosen route in blocks.
+    pub max_cltv_delta: u16,
 }

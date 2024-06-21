@@ -9,40 +9,59 @@ use secp256k1::hashes::sha256::Hash;
 use tracing::{debug, error, field, instrument, trace, warn};
 
 use crate::{
+    block_watcher::BlockProvider,
     messages::{HtlcAcceptedRequest, HtlcAcceptedResponse, TrampolineRoutingPolicy},
     payment_provider::{PaymentProvider, PaymentRequest},
 };
 
-pub struct HtlcManager<P>
+pub struct HtlcManager<B, P>
 where
+    B: BlockProvider,
     P: PaymentProvider,
 {
-    local_pubkey: PublicKey,
-    routing_policy: TrampolineRoutingPolicy,
-    mpp_timeout: Duration,
-    payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
-    payment_provider: Arc<P>,
-    allow_self_route_hints: bool,
+    params: Arc<Params<B, P>>,
 }
 
-impl<P> HtlcManager<P>
+struct Params<B, P>
 where
+    B: BlockProvider,
+    P: PaymentProvider,
+{
+    allow_self_route_hints: bool,
+    block_provider: Arc<B>,
+    cltv_delta: u16,
+    local_pubkey: PublicKey,
+    mpp_timeout: Duration,
+    payment_provider: Arc<P>,
+    payments: Mutex<HashMap<Hash, PaymentState>>,
+    routing_policy: TrampolineRoutingPolicy,
+}
+
+impl<B, P> HtlcManager<B, P>
+where
+    B: BlockProvider + Send + Sync + 'static,
     P: PaymentProvider + Send + Sync + 'static,
 {
     pub fn new(
         local_pubkey: PublicKey,
         routing_policy: TrampolineRoutingPolicy,
         mpp_timeout: Duration,
+        cltv_delta: u16,
         payment_provider: Arc<P>,
+        block_provider: Arc<B>,
         allow_self_route_hints: bool,
     ) -> Self {
         Self {
-            local_pubkey,
-            routing_policy,
-            mpp_timeout,
-            payments: Arc::new(Mutex::new(HashMap::new())),
-            payment_provider,
-            allow_self_route_hints,
+            params: Arc::new(Params {
+                allow_self_route_hints,
+                block_provider,
+                cltv_delta,
+                local_pubkey,
+                mpp_timeout,
+                payment_provider,
+                payments: Mutex::new(HashMap::new()),
+                routing_policy,
+            }),
         }
     }
 
@@ -61,17 +80,15 @@ where
         };
 
         {
-            let mut payments = self.payments.lock().await;
+            let mut payments = self.params.payments.lock().await;
             let payment_state = payments
                 .entry(*trampoline.invoice.payment_hash())
                 .or_insert_with(|| {
                     let (s1, r1) = mpsc::channel(1);
                     let (s2, r2) = mpsc::channel(1);
                     tokio::spawn(watch_payment(
-                        Arc::clone(&self.payment_provider),
-                        Arc::clone(&self.payments),
+                        Arc::clone(&self.params),
                         *trampoline.clone(),
-                        self.mpp_timeout,
                         r1,
                         r2,
                     ));
@@ -81,6 +98,19 @@ where
             // If the trampoline info doesn't match previous trampoline infos,
             // fail the payment asap.
             if *trampoline != payment_state.trampoline {
+                trace!("Trampoline info doesn't match existing trampoline info for payment.");
+                payment_state
+                    .fail(self.temporary_trampoline_failure())
+                    .await;
+            }
+
+            // Ensure there's enough relative time to claim htlcs.
+            if req.htlc.cltv_expiry_relative < self.params.routing_policy.cltv_expiry_delta as i64 {
+                trace!(
+                    cltv_expiry_relative = req.htlc.cltv_expiry_relative,
+                    policy_cltv_expiry_delta = self.params.routing_policy.cltv_expiry_delta,
+                    "Relative cltv expiry too low."
+                );
                 payment_state
                     .fail(self.temporary_trampoline_failure())
                     .await;
@@ -125,7 +155,7 @@ where
         // If we are the destination, let the invoice subsystem handle this
         // htlc.
         // TODO: Double check whether this makes sense.
-        if trampoline.payee.eq(&self.local_pubkey) {
+        if trampoline.payee.eq(&self.params.local_pubkey) {
             trace!("We are the payee, invoice subsystem handles this htlc.");
             return HtlcCheckResult::Response(default_response());
         }
@@ -139,24 +169,15 @@ where
 
         // Ensure enough fees are paid according to the routing policy.
         if !self
+            .params
             .routing_policy
             .fee_sufficient(total_msat, trampoline.amount_msat)
         {
             trace!(
                 total_msat = total_msat,
                 trampoline.amount_msat = trampoline.amount_msat,
-                policy = field::debug(&self.routing_policy),
+                policy = field::debug(&self.params.routing_policy),
                 "Payment offers too low fee for trampoline."
-            );
-            return HtlcCheckResult::Response(self.temporary_trampoline_failure());
-        }
-
-        // Ensure there's enough relative time to claim htlcs.
-        if req.htlc.cltv_expiry_relative < self.routing_policy.cltv_expiry_delta as i64 {
-            trace!(
-                cltv_expiry_relative = req.htlc.cltv_expiry_relative,
-                policy_cltv_expiry_delta = self.routing_policy.cltv_expiry_delta,
-                "Relative cltv expiry too low."
             );
             return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
@@ -167,7 +188,7 @@ where
         if let Some(our_hint) = route_hints.iter().find(|hint| {
             hint.0
                 .last()
-                .map(|hop| hop.src_node_id.eq(&self.local_pubkey))
+                .map(|hop| hop.src_node_id.eq(&self.params.local_pubkey))
                 .unwrap_or(false)
         }) {
             let _ = match our_hint.0.last() {
@@ -183,7 +204,7 @@ where
                 }
             };
 
-            if !self.allow_self_route_hints {
+            if !self.params.allow_self_route_hints {
                 debug!(
                     "Got invoice with ourselves in the hint. Erroring because this is not supported."
                 );
@@ -269,7 +290,7 @@ where
         };
 
         Ok(Some(TrampolineInfo {
-            routing_policy: self.routing_policy.clone(),
+            routing_policy: self.params.routing_policy.clone(),
             amount_msat,
             bolt11: String::from(invoice_str),
             invoice,
@@ -278,7 +299,7 @@ where
     }
 
     fn temporary_trampoline_failure(&self) -> HtlcAcceptedResponse {
-        HtlcAcceptedResponse::temporary_trampoline_failure(self.routing_policy.clone())
+        HtlcAcceptedResponse::temporary_trampoline_failure(self.params.routing_policy.clone())
     }
 }
 
@@ -288,24 +309,24 @@ fn default_response() -> HtlcAcceptedResponse {
 
 #[instrument(
     level = "debug",
-    skip(payment_provider, payments, trampoline, payment_ready, fail_requested),
+    skip_all,
     fields(payment_hash = %trampoline.invoice.payment_hash()))]
-async fn watch_payment<P>(
-    payment_provider: Arc<P>,
-    payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
+async fn watch_payment<B, P>(
+    params: Arc<Params<B, P>>,
     trampoline: TrampolineInfo,
-    mpp_timeout: Duration,
     mut payment_ready: mpsc::Receiver<()>,
     mut fail_requested: mpsc::Receiver<HtlcAcceptedResponse>,
 ) where
+    B: BlockProvider,
     P: PaymentProvider,
 {
     // TODO: Check whether we already have the preimage.
 
     tokio::select! {
-        _ = tokio::time::sleep(mpp_timeout) => {
+        _ = tokio::time::sleep(params.mpp_timeout) => {
             debug!("Payment timed out waiting for htlcs.");
-            let mut payments = payments.lock().await;
+            // TODO: Double-check no payment is in-flight.
+            let mut payments = params.payments.lock().await;
             let mut state = payments.remove(trampoline.invoice.payment_hash())
                 .expect("Payment timed out waiting for htlcs, but payment was already gone.");
             state.resolve(HtlcAcceptedResponse::temporary_trampoline_failure(
@@ -323,7 +344,7 @@ async fn watch_payment<P>(
             };
 
             debug!("Payment fail requested.");
-            let mut payments = payments.lock().await;
+            let mut payments = params.payments.lock().await;
             let mut state = payments.remove(trampoline.invoice.payment_hash())
                 .expect("Fail requested for payment, but payment was already gone");
             state.resolve(failure);
@@ -340,28 +361,44 @@ async fn watch_payment<P>(
         None => Some(trampoline.amount_msat),
     };
 
-    let max_fee_msat = {
-        let payments = payments.lock().await;
+    let (max_fee_msat, cltv_expiry) = {
+        let payments = params.payments.lock().await;
         let payment = payments
             .get(trampoline.invoice.payment_hash())
             .expect("Payment is ready for paying, but payment was already gone.");
-        payment
+        let max_fee_msat = payment
             .amount_received_msat
-            .saturating_sub(trampoline.amount_msat)
+            .saturating_sub(trampoline.amount_msat);
+        (max_fee_msat, payment.cltv_expiry)
     };
 
-    // TODO: re-check the cltv expiry.
+    // Compute the maximum cltv delta to be safe for this payment. We always
+    // want to keep a minimum gap of size `cltv_delta` between the incoming and
+    // outgoing expiry in order to handle force closures gracefully. The cltv
+    // delta is always capped by the one defined in our trampoline policy.
+    let current_height = params.block_provider.current_height().await;
+    let max_cltv_delta = std::cmp::min(
+        cltv_expiry
+            .saturating_sub(current_height)
+            .saturating_sub(params.cltv_delta as u32)
+            .try_into()
+            .unwrap_or(u16::MAX),
+        trampoline.routing_policy.cltv_expiry_delta,
+    );
+
     // TODO: Persist we're about to pay.
     trace!("about to pay.");
-    let pay_result = payment_provider
+    let pay_result = params
+        .payment_provider
         .pay(PaymentRequest {
             bolt11: trampoline.bolt11,
             amount_msat,
             max_fee_msat,
+            max_cltv_delta,
         })
         .await;
 
-    let mut payments = payments.lock().await;
+    let mut payments = params.payments.lock().await;
     let mut payment = payments
         .remove(trampoline.invoice.payment_hash())
         .expect("Payment just returned from paying, but payment was already gone.");
@@ -487,6 +524,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use crate::{
+        block_watcher::MockBlockProvider,
         htlc_manager::HtlcManager,
         messages::{
             Htlc, HtlcAcceptedRequest, HtlcAcceptedResponse, HtlcFailReason, Onion,
@@ -496,12 +534,22 @@ mod tests {
         tlv::{SerializedTlvStream, TlvEntry},
     };
 
-    fn htlc_manager(payment_provider: MockPaymentProvider) -> HtlcManager<MockPaymentProvider> {
+    fn cltv_delta() -> u16 {
+        34
+    }
+
+    fn htlc_manager(
+        payment_provider: MockPaymentProvider,
+    ) -> HtlcManager<MockBlockProvider, MockPaymentProvider> {
+        let mut block_provider = MockBlockProvider::new();
+        block_provider.expect_current_height().returning(|| 0);
         HtlcManager::new(
             local_pubkey(),
             policy(),
             mpp_timeout(),
+            cltv_delta(),
             Arc::new(payment_provider),
+            Arc::new(block_provider),
             true,
         )
     }
@@ -647,7 +695,7 @@ mod tests {
         assert!(
             matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
-        let payments = manager.payments.lock().await;
+        let payments = manager.params.payments.lock().await;
         assert_eq!(0, payments.len())
     }
 
@@ -666,6 +714,7 @@ mod tests {
                 bolt11: invoice_string(),
                 amount_msat: None,
                 max_fee_msat,
+                max_cltv_delta: policy().cltv_expiry_delta - cltv_delta(),
             }))
             .return_once(|_| pay_result);
         let manager = htlc_manager(payment_provider);
@@ -676,7 +725,7 @@ mod tests {
         assert!(
             matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
-        let payments = manager.payments.lock().await;
+        let payments = manager.params.payments.lock().await;
         assert_eq!(0, payments.len())
     }
 
@@ -694,7 +743,7 @@ mod tests {
         assert!(
             matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
-        let payments = manager.payments.lock().await;
+        let payments = manager.params.payments.lock().await;
         assert_eq!(0, payments.len())
     }
 
@@ -741,7 +790,7 @@ mod tests {
         assert!(
             matches!(result2, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
-        let payments = manager.payments.lock().await;
+        let payments = manager.params.payments.lock().await;
         assert_eq!(0, payments.len())
     }
 
@@ -769,7 +818,7 @@ mod tests {
         assert!(
             matches!(result2, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
-        let payments = manager.payments.lock().await;
+        let payments = manager.params.payments.lock().await;
         assert_eq!(0, payments.len())
     }
 }

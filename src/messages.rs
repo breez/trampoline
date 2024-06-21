@@ -142,6 +142,12 @@ impl TrampolineRoutingPolicy {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BlockAdded {
+    // pub hash: String,
+    pub height: u32,
+}
+
 #[cfg(test)]
 mod fee_sufficient_tests {
     use super::TrampolineRoutingPolicy;
