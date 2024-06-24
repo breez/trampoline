@@ -6,7 +6,11 @@ check: clippy fmt-check test
 clean: clean-test clean-rust
 
 clean-test:
-	rm -rf test-env
+	rm -rf itest-env
+	rm -rf .pytest_cache
+	rm -rf itest/build
+	rm -rf itest/tests/__pycache__
+	rm -rf itest/trampoline.egg-info
 
 clean-rust:
 	rm -rf target
@@ -22,7 +26,7 @@ fmt-check:
 	cargo fmt -- --check
 
 itest: build itest-env
-	itest-env/bin/pytest itest/tests
+	cd itest-env && bin/pytest ../itest/tests
 
 itest-env:
 	virtualenv itest-env --python=$(which python3) --download --always-copy --clear
