@@ -397,6 +397,7 @@ async fn watch_payment<B, P>(
             max_cltv_delta,
         })
         .await;
+    trace!("pay returned.");
 
     let mut payments = params.payments.lock().await;
     let mut payment = payments
