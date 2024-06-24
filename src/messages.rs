@@ -143,6 +143,11 @@ impl TrampolineRoutingPolicy {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct BlockAddedNotification {
+    pub block_added: BlockAdded,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BlockAdded {
     // pub hash: String,
     pub height: u32,

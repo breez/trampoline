@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::block_watcher::BlockWatcher;
 use crate::cln_plugin::{Builder, Plugin};
-use crate::messages::BlockAdded;
+use crate::messages::BlockAddedNotification;
 use crate::{
     htlc_manager::HtlcManager, messages::HtlcAcceptedRequest, payment_provider::PaymentProvider,
 };
@@ -58,7 +58,11 @@ async fn on_block_added<P>(plugin: Plugin<PluginState<P>>, v: Value) -> Result<(
 where
     P: PaymentProvider + Clone + Send + Sync + 'static,
 {
-    let block_added: BlockAdded = serde_json::from_value(v)?;
-    plugin.state().block_watcher.new_block(&block_added).await;
+    let block_added: BlockAddedNotification = serde_json::from_value(v)?;
+    plugin
+        .state()
+        .block_watcher
+        .new_block(&block_added.block_added)
+        .await;
     Ok(())
 }
