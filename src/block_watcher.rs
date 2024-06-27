@@ -8,7 +8,10 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{messages::BlockAdded, rpc::Rpc};
+use crate::{
+    messages::BlockAdded,
+    rpc::{ClnRpc, Rpc},
+};
 #[cfg(test)]
 use mockall::automock;
 

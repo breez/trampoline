@@ -3,11 +3,12 @@ use std::{sync::Arc, time::Duration};
 use anyhow::{anyhow, Error};
 use block_watcher::BlockWatcher;
 use cln_plugin::options::{ConfigOption, DefaultIntegerConfigOption, FlagConfigOption};
-use htlc_manager::HtlcManager;
+use htlc_manager::{HtlcManager, HtlcManagerParams};
 use messages::TrampolineRoutingPolicy;
 use payment_provider::PayPaymentProvider;
 use plugin::PluginState;
-use rpc::Rpc;
+use rpc::{ClnRpc, Rpc};
+use store::ClnDatastore;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -18,6 +19,7 @@ mod messages;
 mod payment_provider;
 mod plugin;
 mod rpc;
+mod store;
 mod tlv;
 
 const NAME_CLTV_DELTA: &str = "trampoline-cltv-delta";
@@ -99,7 +101,7 @@ async fn main() -> Result<(), Error> {
     let fee_proportional_millionths = cp.option(&OPTION_POLICY_FEE_PER_SATOSHI)?.try_into()?;
     let mpp_timeout_secs = cp.option(&OPTION_MPP_TIMEOUT)?.try_into()?;
     let allow_self_route_hints: bool = !cp.option(&OPTION_NO_SELF_ROUTE_HINTS)?;
-    let policy = TrampolineRoutingPolicy {
+    let routing_policy = TrampolineRoutingPolicy {
         cltv_expiry_delta,
         fee_base_msat,
         fee_proportional_millionths,
@@ -111,15 +113,17 @@ async fn main() -> Result<(), Error> {
     let (sender, receiver) = mpsc::channel(1);
     let block_join = block_watcher.start(receiver).await?;
     let block_watcher = Arc::new(block_watcher);
-    let htlc_manager = Arc::new(HtlcManager::new(
-        info.id,
-        policy,
-        mpp_timeout,
-        cltv_delta,
-        payment_provider,
-        Arc::clone(&block_watcher),
+    let store = Arc::new(ClnDatastore::new(Arc::clone(&rpc)));
+    let htlc_manager = Arc::new(HtlcManager::new(HtlcManagerParams {
         allow_self_route_hints,
-    ));
+        block_provider: Arc::clone(&block_watcher),
+        cltv_delta,
+        local_pubkey: info.id,
+        mpp_timeout,
+        payment_provider,
+        routing_policy,
+        store: Arc::clone(&store),
+    }));
     let state = PluginState::new(Arc::clone(&block_watcher), Arc::clone(&htlc_manager));
     let plugin = cp.start(state.clone()).await?;
 

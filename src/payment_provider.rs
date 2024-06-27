@@ -1,19 +1,26 @@
 use std::{
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use cln_rpc::{
-    model::{requests::PayRequest, responses::PayStatus},
+    model::{
+        requests::{
+            ListpaysRequest, ListpaysStatus, ListpeerchannelsRequest, PayRequest,
+            WaitsendpayRequest,
+        },
+        responses::PayStatus,
+    },
     primitives::Amount,
 };
 #[cfg(test)]
 use mockall::automock;
+use secp256k1::hashes::sha256;
 use tracing::{instrument, warn};
 
-use crate::rpc::Rpc;
+use crate::rpc::{ClnRpc, Rpc};
 
 /// The `PaymentProvider` trait exposes a `pay` method.
 #[cfg_attr(test, automock)]
@@ -23,6 +30,7 @@ pub trait PaymentProvider {
     /// already in-flight, it returns when that payment is done. The return
     /// value is the preimage, if successful.
     async fn pay(&self, req: PaymentRequest) -> Result<Vec<u8>>;
+    async fn wait_payment(&self, payment_hash: sha256::Hash) -> Result<Option<Vec<u8>>>;
 }
 
 #[derive(Clone)]
@@ -30,9 +38,73 @@ pub struct PayPaymentProvider {
     rpc: Arc<Rpc>,
 }
 
+enum PaymentState {
+    Pending,
+    Free,
+    Resolved(Vec<u8>),
+}
+
 impl PayPaymentProvider {
     pub fn new(rpc: Arc<Rpc>) -> Self {
         Self { rpc }
+    }
+
+    async fn check_payment_done(&self, payment_hash: sha256::Hash) -> Result<PaymentState> {
+        if let Some(preimage) = self
+            .rpc
+            .listpays(&ListpaysRequest {
+                payment_hash: Some(payment_hash),
+                bolt11: None,
+                status: Some(ListpaysStatus::COMPLETE),
+            })
+            .await?
+            .pays
+            .iter()
+            .find_map(|pay| pay.preimage)
+        {
+            return Ok(PaymentState::Resolved(preimage.to_vec()));
+        }
+
+        if !self
+            .rpc
+            .listpays(&ListpaysRequest {
+                payment_hash: Some(payment_hash),
+                bolt11: None,
+                status: Some(ListpaysStatus::PENDING),
+            })
+            .await?
+            .pays
+            .is_empty()
+        {
+            return Ok(PaymentState::Pending);
+        }
+
+        // Ensure no pending htlcs left
+        if self
+            .rpc
+            .listpeerchannels(&ListpeerchannelsRequest { id: None })
+            .await?
+            .channels
+            .map(|channels| {
+                channels.into_iter().any(|channel| {
+                    channel
+                        .htlcs
+                        .map(|htlcs| {
+                            htlcs.iter().any(|htlc| {
+                                htlc.payment_hash
+                                    .map(|htlc_hash| htlc_hash == payment_hash)
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+        {
+            return Ok(PaymentState::Pending);
+        }
+
+        Ok(PaymentState::Free)
     }
 }
 
@@ -81,6 +153,47 @@ impl PaymentProvider for PayPaymentProvider {
                     todo!()
                 };
                 return Err(anyhow!("payment failed"));
+            }
+        }
+    }
+
+    async fn wait_payment(&self, payment_hash: sha256::Hash) -> Result<Option<Vec<u8>>> {
+        if let Some(preimage) = match self
+            .rpc
+            .waitsendpay(&WaitsendpayRequest {
+                payment_hash,
+                timeout: None,
+                partid: None,
+                groupid: None,
+            })
+            .await
+        {
+            Ok(resp) => resp.payment_preimage.map(|p| p.to_vec()),
+            Err(e) => match e {
+                crate::rpc::RpcError::Rpc(rpc) => {
+                    if let Some(code) = rpc.code {
+                        match code {
+                            200 => return Err(anyhow!("timeout")),
+                            _ => None,
+                        }
+                    } else {
+                        return Err(rpc.into());
+                    }
+                }
+                crate::rpc::RpcError::General(e) => return Err(e),
+            },
+        } {
+            return Ok(Some(preimage));
+        };
+
+        loop {
+            match self.check_payment_done(payment_hash).await? {
+                PaymentState::Pending => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                PaymentState::Free => return Ok(None),
+                PaymentState::Resolved(preimage) => return Ok(Some(preimage)),
             }
         }
     }

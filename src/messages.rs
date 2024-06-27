@@ -1,4 +1,6 @@
 use cln_rpc::primitives::ShortChannelId;
+use lightning_invoice::Bolt11Invoice;
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::tlv::SerializedTlvStream;
@@ -51,6 +53,10 @@ pub enum HtlcAcceptedResponse {
 }
 
 impl HtlcAcceptedResponse {
+    pub fn resolve(payment_key: Vec<u8>) -> Self {
+        HtlcAcceptedResponse::Resolve { payment_key }
+    }
+
     pub fn temporary_node_failure() -> Self {
         HtlcAcceptedResponse::Fail {
             failure_message: HtlcFailReason::TemporaryNodeFailure.encode(),
@@ -151,6 +157,15 @@ pub struct BlockAddedNotification {
 pub struct BlockAdded {
     // pub hash: String,
     pub height: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrampolineInfo {
+    pub bolt11: String,
+    pub invoice: Bolt11Invoice,
+    pub payee: PublicKey,
+    pub amount_msat: u64,
+    pub routing_policy: TrampolineRoutingPolicy,
 }
 
 #[cfg(test)]
