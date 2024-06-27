@@ -26,7 +26,7 @@ fmt-check:
 	cargo fmt -- --check
 
 itest: build itest-env
-	cd itest-env && bin/pytest ../itest/tests
+	. itest-env/bin/activate; itest-env/bin/pytest itest/tests
 
 itest-env:
 	virtualenv itest-env --python=$(which python3) --download --always-copy --clear

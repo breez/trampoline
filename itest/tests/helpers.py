@@ -7,12 +7,19 @@ from pyln.proto.onion import TlvPayload
 plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
 hodl_plugin_path = os.path.join(os.path.dirname(__file__), "hodl_plugin.py")
 
-def setup(node_factory, hodl_plugin=False):
+def setup(node_factory, hodl_plugin=False, may_reconnect=False):
+    sender_opts = {}
     recipient_opts = {}
+    trampoline_opts = {'plugin': plugin_path}
     if hodl_plugin:
         recipient_opts['plugin'] = hodl_plugin_path
-    sender, recipient = node_factory.get_nodes(2, [{}, recipient_opts])
-    trampoline = node_factory.get_node(options={'plugin': plugin_path}, start=False)
+    
+    if may_reconnect:
+        recipient_opts['may_reconnect'] = True
+        sender_opts['may_reconnect'] = True
+
+    sender, recipient = node_factory.get_nodes(2, [sender_opts, recipient_opts])
+    trampoline = node_factory.get_node(options=trampoline_opts, start=False, may_reconnect=may_reconnect)
     trampoline.daemon.env['CLN_PLUGIN_LOG'] = 'cln_plugin=trace,cln_rpc=trace,cln_grpc=trace,trampoline=trace,debug'
     try:
         trampoline.start(True)
