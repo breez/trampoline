@@ -30,9 +30,12 @@ pub trait PaymentProvider {
     /// already in-flight, it returns when that payment is done. The return
     /// value is the preimage, if successful.
     async fn pay(&self, req: PaymentRequest) -> Result<Vec<u8>>;
+    /// `wait_payment` waits until a payment is fully resolved and no htlcs for
+    /// the given payment hash are outgoing anymore.
     async fn wait_payment(&self, payment_hash: sha256::Hash) -> Result<Option<Vec<u8>>>;
 }
 
+/// `PaymentProvider` using core lightning's `pay` method.
 #[derive(Clone)]
 pub struct PayPaymentProvider {
     rpc: Arc<Rpc>,
@@ -45,11 +48,15 @@ enum PaymentState {
 }
 
 impl PayPaymentProvider {
+    /// Initializes a new `PayPaymentProvider`
     pub fn new(rpc: Arc<Rpc>) -> Self {
         Self { rpc }
     }
 
+    /// Checks whether a payment is currently in-flight.
     async fn check_payment_done(&self, payment_hash: sha256::Hash) -> Result<PaymentState> {
+        // If the payment is complete, ignore any htlc status, because any
+        // trampoline payment can then be claimed from the client.
         if let Some(preimage) = self
             .rpc
             .listpays(&ListpaysRequest {
@@ -65,6 +72,7 @@ impl PayPaymentProvider {
             return Ok(PaymentState::Resolved(preimage.to_vec()));
         }
 
+        // If there are pending payments, that means it's pending.
         if !self
             .rpc
             .listpays(&ListpaysRequest {
@@ -79,7 +87,7 @@ impl PayPaymentProvider {
             return Ok(PaymentState::Pending);
         }
 
-        // Ensure no pending htlcs left
+        // If there are any htlcs still in the channel, it is still pending.
         if self
             .rpc
             .listpeerchannels(&ListpeerchannelsRequest { id: None })
@@ -110,6 +118,9 @@ impl PayPaymentProvider {
 
 #[async_trait]
 impl PaymentProvider for PayPaymentProvider {
+    /// `pay` pays the specified invoice. If a payment for this invoice is
+    /// already in-flight, it returns when that payment is done. The return
+    /// value is the preimage, if successful.
     #[instrument(level = "trace", skip(self))]
     async fn pay(&self, req: PaymentRequest) -> Result<Vec<u8>> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -171,6 +182,8 @@ impl PaymentProvider for PayPaymentProvider {
         }
     }
 
+    /// `wait_payment` waits until a payment is fully resolved and no htlcs for
+    /// the given payment hash are outgoing anymore.
     async fn wait_payment(&self, payment_hash: sha256::Hash) -> Result<Option<Vec<u8>>> {
         if let Some(preimage) = match self
             .rpc
@@ -218,6 +231,8 @@ impl PaymentProvider for PayPaymentProvider {
 pub struct PaymentRequest {
     /// The bolt11 invoice to pay.
     pub bolt11: String,
+    /// The payment hash of the invoice, for convenience.
+    pub payment_hash: sha256::Hash,
     /// Should only be set if `bolt11` is a zero-amount invoice.
     pub amount_msat: Option<u64>,
     /// The maximum fee for the chosen route in millisatoshi.

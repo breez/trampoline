@@ -33,10 +33,6 @@ pub trait ClnRpc {
     ) -> Result<WaitsendpayResponse, RpcError>;
 }
 
-pub struct Rpc {
-    rpc_file: String,
-}
-
 #[derive(Debug)]
 pub enum RpcError {
     Rpc(cln_rpc::RpcError),
@@ -66,11 +62,19 @@ impl From<cln_rpc::RpcError> for RpcError {
 
 impl std::error::Error for RpcError {}
 
+/// `ClnRpc` implementation using the `cln_rpc` crate.
+pub struct Rpc {
+    /// Socket file to connect to core lightning.
+    rpc_file: String,
+}
+
 impl Rpc {
+    /// Initializes a new `Rpc`.
     pub fn new(rpc_file: String) -> Self {
         Self { rpc_file }
     }
 
+    /// Convenience function to get a new instance of the `cln_rpc::ClnRpc`.
     async fn rpc(&self) -> Result<cln_rpc::ClnRpc> {
         // TODO: This creates a new unix socket connection for every payment.
         // Also, does this cause different requests to steal eachothers

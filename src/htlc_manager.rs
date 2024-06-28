@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use anyhow::{anyhow, Result};
 use secp256k1::hashes::sha256::Hash;
-use tracing::{debug, error, field, instrument, trace, warn};
+use tracing::{debug, error, field, instrument, trace};
 
 use crate::{
     block_watcher::BlockProvider,
@@ -17,6 +17,8 @@ use crate::{
     store::Datastore,
 };
 
+/// HtlcManager is the main handler for htlcs. It aggregates htlcs into payments
+/// based on the payment hash.
 pub struct HtlcManager<B, P, S>
 where
     B: BlockProvider,
@@ -27,28 +29,48 @@ where
     payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
 }
 
+/// Constructor parameters for `HtlcManager`.
 pub struct HtlcManagerParams<B, P, S>
 where
     B: BlockProvider,
     P: PaymentProvider,
     S: Datastore,
 {
+    /// Value indicating whether to allow trampoline payments for invoices where
+    /// the current local node is in the route hint.
     pub allow_self_route_hints: bool,
+
+    /// Provides the current chain tip.
     pub block_provider: Arc<B>,
+
+    /// The cltv delta to use between incoming and outgoing payments.
     pub cltv_delta: u16,
+
+    /// The public key of the local node identity.
     pub local_pubkey: PublicKey,
+
+    /// Timeout before multipart payments that don't add up to the right amount
+    /// are failed back.
     pub mpp_timeout: Duration,
+
+    /// Provider for payment sending.
     pub payment_provider: Arc<P>,
+
+    /// The trampoline routing policy to enforce.
     pub routing_policy: TrampolineRoutingPolicy,
+
+    /// Store for persisting trampoline payment states.
     pub store: Arc<S>,
 }
 
+/// Main implementation of HtlcManager.
 impl<B, P, S> HtlcManager<B, P, S>
 where
     B: BlockProvider + Send + Sync + 'static,
     P: PaymentProvider + Send + Sync + 'static,
     S: Datastore + Send + Sync + 'static,
 {
+    /// Initializes a new HtlcManager.
     pub fn new(params: HtlcManagerParams<B, P, S>) -> Self {
         Self {
             params: Arc::new(params),
@@ -56,6 +78,11 @@ where
         }
     }
 
+    /// Main htlc handler. Whenever there's a new htlc added by cln, this
+    /// function will do everything necessary to return the correct result. When
+    /// a payment consists of multiple htlcs, this function will aggregate the
+    /// htlcs into a payment and return a result for every associated htlc
+    /// simultaneously.
     #[instrument(
         level = "debug",
         skip_all,
@@ -75,6 +102,7 @@ where
             let payment_state = payments
                 .entry(*trampoline.invoice.payment_hash())
                 .or_insert_with(|| {
+                    // If the payment did not yet exist, spawn the payment lifecycle.
                     let (s1, r1) = mpsc::channel(1);
                     let (s2, r2) = mpsc::channel(1);
                     tokio::spawn(payment_lifecycle(
@@ -84,6 +112,8 @@ where
                         r1,
                         r2,
                     ));
+
+                    // And insert the payment into the hashmap.
                     PaymentState::new(trampoline.clone(), s1, s2)
                 });
 
@@ -143,6 +173,9 @@ where
         resp
     }
 
+    /// Checks whether this htlc belongs to a trampoline payment and returns the
+    /// relevant info if so, otherwise returns the appropriate result for the
+    /// htlc.
     fn check_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcCheckResult {
         // For trampoline payments we appear to be the destination. If we're not the
         // destination, continue.
@@ -208,6 +241,7 @@ where
         HtlcCheckResult::Trampoline(Box::new(trampoline))
     }
 
+    /// Extracts the trampoline information from the request onion payload.
     fn extract_trampoline_info(&self, req: &HtlcAcceptedRequest) -> Result<Option<TrampolineInfo>> {
         let invoice_blob = match req.onion.payload.get(33001) {
             Some(invoice_blob) => invoice_blob.value,
@@ -290,15 +324,21 @@ where
         }))
     }
 
+    /// Convenience function to return temporary trampoline failure with the
+    /// current routing policy.
     fn temporary_trampoline_failure(&self) -> HtlcAcceptedResponse {
         HtlcAcceptedResponse::temporary_trampoline_failure(self.params.routing_policy.clone())
     }
 }
 
+/// The default response is continue, meaning the htlc is not modified by this
+/// plugin.
 fn default_response() -> HtlcAcceptedResponse {
     HtlcAcceptedResponse::Continue { payload: None }
 }
 
+/// The main lifecycle of a payment. Should be started in the background when
+/// the first htlc for the given payment hash comes in.
 #[instrument(
     level = "debug",
     skip_all,
@@ -378,6 +418,7 @@ async fn payment_lifecycle<B, P, S>(
         }
     };
 
+    // TODO: Handle potential timeout before starting the select here.
     tokio::select! {
         _ = tokio::time::sleep(params.mpp_timeout) => {
             debug!("Payment timed out waiting for htlcs.");
@@ -410,6 +451,7 @@ async fn payment_lifecycle<B, P, S>(
         None => Some(trampoline.amount_msat),
     };
 
+    // Get the payment parameters.
     let (max_fee_msat, cltv_expiry) = {
         let payments = payments.lock().await;
         let payment = payments
@@ -453,6 +495,8 @@ async fn payment_lifecycle<B, P, S>(
     };
 
     trace!("about to pay.");
+    // Send the payment. This method will return once the payment has fully
+    // resolved.
     let pay_result = params
         .payment_provider
         .pay(PaymentRequest {
@@ -502,6 +546,8 @@ async fn payment_lifecycle<B, P, S>(
     }
 }
 
+/// Resolves the payment with the given response. Removes the payment from the
+/// hashmap and returns a response for every associated htlc.
 async fn resolve(
     payments: &Arc<Mutex<HashMap<Hash, PaymentState>>>,
     trampoline: &TrampolineInfo,
@@ -514,18 +560,38 @@ async fn resolve(
     payment.resolve(resp)
 }
 
+/// The current state of a given payment.
 struct PaymentState {
+    /// Htlc listeners waiting for a response for the current payment.
     htlcs: Vec<oneshot::Sender<HtlcAcceptedResponse>>,
+
+    /// The trampoline information extracted from the htlcs.
     trampoline: TrampolineInfo,
+
+    /// Value indicating whether the payment is ready for paying.
     is_ready: bool,
+
+    /// Signal invoked when the payment is ready for paying.
     payment_ready: mpsc::Sender<()>,
+
+    /// When the payment should be failed back, this signals the payment
+    /// lifecycle the payment should be failed. If the payment is currently in
+    /// the process of being paid, this might be ignored.
     fail_requested: mpsc::Sender<HtlcAcceptedResponse>,
+
+    /// The total amount currently received with htlcs with the same payment
+    /// hash.
     amount_received_msat: u64,
+
+    /// The minimum cltv expiry on htlcs associated to this payment.
     cltv_expiry: u32,
+
+    /// If the payment was already resolved, this contains the resolution.
     resolution: Option<HtlcAcceptedResponse>,
 }
 
 impl PaymentState {
+    /// Initializes a new blank payment state.
     fn new(
         trampoline: TrampolineInfo,
         payment_ready: mpsc::Sender<()>,
@@ -543,6 +609,9 @@ impl PaymentState {
         }
     }
 
+    /// Adds a htlc to the payment, incrementing the amount received. If the
+    /// added htlc makes the payment add up to the expected amount, signals the
+    /// payment is ready.
     async fn add_htlc(
         &mut self,
         req: &HtlcAcceptedRequest,
@@ -572,10 +641,14 @@ impl PaymentState {
         }
     }
 
+    /// Requests failure for this payment. Does not fail back htlcs immediately,
+    /// because an outgoing payment may already be in-flight.
     async fn fail(&self, resp: HtlcAcceptedResponse) {
         let _ = self.fail_requested.send(resp).await;
     }
 
+    /// Resolves all htlcs associated to this payment with the given resolution
+    /// immediately.
     fn resolve(&mut self, resp: HtlcAcceptedResponse) {
         trace!(resolution = field::debug(&resp), "resolving payment");
         self.resolution = Some(resp.clone());
@@ -583,7 +656,7 @@ impl PaymentState {
         while let Some(listener) = self.htlcs.pop() {
             match listener.send(resp.clone()) {
                 Ok(_) => {}
-                Err(e) => warn!("htlc listener hung up, could not send response {:?}", e),
+                Err(e) => error!("htlc listener hung up, could not send response {:?}", e),
             };
         }
     }

@@ -36,6 +36,7 @@ where
     }
 }
 
+/// Initializes the plugin builder with the appropriate hooks.
 pub fn init<P>() -> Builder<PluginState<P>, Stdin, Stdout>
 where
     P: PaymentProvider + Clone + Send + Sync + 'static,
@@ -49,6 +50,7 @@ where
         )
 }
 
+/// `htlc_accepted` hook invoked by core lightning.
 async fn on_htlc_accepted<P>(
     plugin: Plugin<PluginState<P>>,
     v: Value,
@@ -61,6 +63,7 @@ where
     Ok(serde_json::to_value(resp)?)
 }
 
+/// `block_added` hook invoked by core lightning.
 async fn on_block_added<P>(plugin: Plugin<PluginState<P>>, v: Value) -> Result<(), anyhow::Error>
 where
     P: PaymentProvider + Clone + Send + Sync + 'static,
