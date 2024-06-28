@@ -77,7 +77,7 @@ where
                 .or_insert_with(|| {
                     let (s1, r1) = mpsc::channel(1);
                     let (s2, r2) = mpsc::channel(1);
-                    tokio::spawn(watch_payment(
+                    tokio::spawn(payment_lifecycle(
                         Arc::clone(&self.params),
                         Arc::clone(&self.payments),
                         trampoline.clone(),
@@ -301,7 +301,7 @@ fn default_response() -> HtlcAcceptedResponse {
     level = "debug",
     skip_all,
     fields(payment_hash = %trampoline.invoice.payment_hash()))]
-async fn watch_payment<B, P, S>(
+async fn payment_lifecycle<B, P, S>(
     params: Arc<HtlcManagerParams<B, P, S>>,
     payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
     trampoline: TrampolineInfo,
