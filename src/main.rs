@@ -31,7 +31,6 @@ const OPTION_CLTV_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with
     outgoing payment before the incoming, or redeem the incoming once the \
     outgoing is redeemed.",
 );
-// TODO: Find a sane default for the cltv expiry delta.
 const NAME_POLICY_CLTV_DELTA: &str = "trampoline-policy-cltv-delta";
 const OPTION_POLICY_CLTV_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
     NAME_POLICY_CLTV_DELTA,
