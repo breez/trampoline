@@ -32,7 +32,7 @@ def setup(node_factory, hodl_plugin=False, may_reconnect=False):
     wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']))
     return sender, trampoline, recipient
 
-def send_onion(sender, trampoline, invoice, amount_msat, total_msat, delay=576):
+def send_onion(sender, trampoline, invoice, amount_msat, total_msat, delay=1008):
     def truncate_encode(i: int):
         """Encode a tu64 (or tu32 etc) value"""
         ret = struct.pack("!Q", i)
