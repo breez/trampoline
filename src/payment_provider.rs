@@ -115,6 +115,17 @@ impl PaymentProvider for PayPaymentProvider {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let label = format!("trampoline-{}-{}", req.bolt11, now);
 
+        match self.check_payment_done(req.payment_hash).await? {
+            PaymentState::Pending => {
+                return match self.wait_payment(req.payment_hash).await? {
+                    Some(preimage) => Ok(preimage),
+                    None => Err(anyhow!("payment failed")),
+                };
+            }
+            PaymentState::Free => {}
+            PaymentState::Resolved(preimage) => return Ok(preimage),
+        };
+
         // TODO: extract the failure reason here?
         let resp = self
             .rpc
@@ -142,15 +153,18 @@ impl PaymentProvider for PayPaymentProvider {
             PayStatus::COMPLETE => return Ok(resp.payment_preimage.to_vec()),
             PayStatus::PENDING => {
                 warn!("payment is pending after pay returned");
-                // TODO: Ensure the payment is done before returning here.
-                todo!()
+                return match self.wait_payment(req.payment_hash).await? {
+                    Some(preimage) => Ok(preimage),
+                    None => Err(anyhow!("payment failed")),
+                };
             }
             PayStatus::FAILED => {
                 if let Some(warning) = resp.warning_partial_completion {
                     warn!("pay returned partial completion: {}", warning);
-                    // TODO: Ensure all parts fail (or one succeeds) before
-                    // returning.
-                    todo!()
+                    return match self.wait_payment(req.payment_hash).await? {
+                        Some(preimage) => Ok(preimage),
+                        None => Err(anyhow!("payment failed")),
+                    };
                 };
                 return Err(anyhow!("payment failed"));
             }

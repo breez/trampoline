@@ -457,6 +457,7 @@ async fn payment_lifecycle<B, P, S>(
         .payment_provider
         .pay(PaymentRequest {
             bolt11: trampoline.bolt11.clone(),
+            payment_hash: *trampoline.invoice.payment_hash(),
             amount_msat,
             max_fee_msat,
             max_cltv_delta,
@@ -812,6 +813,7 @@ mod tests {
             .expect_pay()
             .with(eq(PaymentRequest {
                 bolt11: invoice_string(),
+                payment_hash: payment_hash(),
                 amount_msat: None,
                 max_fee_msat,
                 max_cltv_delta: policy().cltv_expiry_delta - cltv_delta(),
