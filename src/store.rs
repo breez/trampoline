@@ -44,7 +44,7 @@ pub struct ClnDatastore {
 #[derive(Serialize, Deserialize)]
 pub enum PaymentState {
     Free,
-    Pending { attempt_id: String },
+    Pending { attempt_id: String, attempt_time_seconds: u64 },
     Succeeded { preimage: Vec<u8> },
 }
 
@@ -64,13 +64,13 @@ impl ClnDatastore {
 impl Datastore for ClnDatastore {
     #[instrument(level = "trace", skip(self))]
     async fn add_payment_attempt(&self, trampoline: &TrampolineInfo) -> Result<AttemptId> {
-        let attempt_id = std::time::SystemTime::now()
+        let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_string();
+            .unwrap();
+        let attempt_id = now.as_nanos().to_string();
         let state = PaymentState::Pending {
             attempt_id: attempt_id.clone(),
+            attempt_time_seconds: now.as_secs(),
         };
         let state = serde_json::to_string(&state)?;
 

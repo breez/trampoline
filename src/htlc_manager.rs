@@ -368,9 +368,9 @@ async fn payment_lifecycle<B, P, S>(
         }
     };
 
-    match state {
-        crate::store::PaymentState::Free => {}
-        crate::store::PaymentState::Pending { attempt_id } => {
+    let time_left = match state {
+        crate::store::PaymentState::Free => params.mpp_timeout,
+        crate::store::PaymentState::Pending { attempt_id, attempt_time_seconds } => {
             match params
                 .payment_provider
                 .wait_payment(*trampoline.invoice.payment_hash())
@@ -396,6 +396,12 @@ async fn payment_lifecycle<B, P, S>(
                         }
                         return;
                     }
+
+                    // Get the time left since this attempt was started.
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .saturating_sub(Duration::from_secs(attempt_time_seconds))
                 }
                 Err(e) => {
                     error!("Failed to await pending payment: {:?}", e);
@@ -418,9 +424,8 @@ async fn payment_lifecycle<B, P, S>(
         }
     };
 
-    // TODO: Handle potential timeout before starting the select here.
     tokio::select! {
-        _ = tokio::time::sleep(params.mpp_timeout) => {
+        _ = tokio::time::sleep(time_left) => {
             debug!("Payment timed out waiting for htlcs.");
             // TODO: Double-check no payment is in-flight.
             resolve(&payments, &trampoline, HtlcAcceptedResponse::temporary_trampoline_failure(
