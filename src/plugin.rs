@@ -10,6 +10,8 @@ use crate::{
 use serde_json::Value;
 use tokio::io::{Stdin, Stdout};
 
+const TRAMPOLINE_FEATURE_BIT: &str = "080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+
 #[derive(Clone)]
 pub struct PluginState<P>
 where
@@ -41,6 +43,10 @@ where
     Builder::new(tokio::io::stdin(), tokio::io::stdout())
         .hook("htlc_accepted", on_htlc_accepted)
         .subscribe("block_added", on_block_added)
+        .featurebits(
+            crate::cln_plugin::FeatureBitsKind::Init,
+            String::from(TRAMPOLINE_FEATURE_BIT),
+        )
 }
 
 async fn on_htlc_accepted<P>(
