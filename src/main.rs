@@ -35,7 +35,7 @@ const OPTION_CLTV_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with
 const NAME_POLICY_CLTV_DELTA: &str = "trampoline-policy-cltv-delta";
 const OPTION_POLICY_CLTV_DELTA: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
     NAME_POLICY_CLTV_DELTA,
-    576,
+    1008,
     "Cltv expiry delta for the trampoline routing policy. Any routes where the \
     total cltv delta is lower than this number will not be tried.",
 );
