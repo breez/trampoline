@@ -108,6 +108,30 @@ where
                     .await;
             }
 
+            // The total is either set in the onion, or it's the forward amount of
+            // the current htlc.
+            let total_msat = match req.onion.total_msat {
+                Some(total_msat) => total_msat,
+                None => req.onion.forward_msat,
+            };
+
+            // Ensure enough fees are paid according to the routing policy.
+            if !self
+                .params
+                .routing_policy
+                .fee_sufficient(total_msat, trampoline.amount_msat)
+            {
+                trace!(
+                    total_msat = total_msat,
+                    trampoline.amount_msat = trampoline.amount_msat,
+                    policy = field::debug(&self.params.routing_policy),
+                    "Payment offers too low fee for trampoline."
+                );
+                payment_state
+                    .fail(self.temporary_trampoline_failure())
+                    .await;
+            }
+
             // Do add the htlc to the payment state always, also if it has
             // failed. It could be a payment was already in-flight, so
             // eventually this htlc settles.
@@ -148,28 +172,6 @@ where
         if trampoline.payee.eq(&self.params.local_pubkey) {
             trace!("We are the payee, invoice subsystem handles this htlc.");
             return HtlcCheckResult::Response(default_response());
-        }
-
-        // The total is either set in the onion, or it's the forward amount of
-        // the current htlc.
-        let total_msat = match req.onion.total_msat {
-            Some(total_msat) => total_msat,
-            None => req.onion.forward_msat,
-        };
-
-        // Ensure enough fees are paid according to the routing policy.
-        if !self
-            .params
-            .routing_policy
-            .fee_sufficient(total_msat, trampoline.amount_msat)
-        {
-            trace!(
-                total_msat = total_msat,
-                trampoline.amount_msat = trampoline.amount_msat,
-                policy = field::debug(&self.params.routing_policy),
-                "Payment offers too low fee for trampoline."
-            );
-            return HtlcCheckResult::Response(self.temporary_trampoline_failure());
         }
 
         // Check whether we are the last hop in the route hint. We can't rewrite
