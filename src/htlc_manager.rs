@@ -370,7 +370,10 @@ async fn payment_lifecycle<B, P, S>(
 
     let time_left = match state {
         crate::store::PaymentState::Free => params.mpp_timeout,
-        crate::store::PaymentState::Pending { attempt_id, attempt_time_seconds } => {
+        crate::store::PaymentState::Pending {
+            attempt_id,
+            attempt_time_seconds,
+        } => {
             match params
                 .payment_provider
                 .wait_payment(*trampoline.invoice.payment_hash())
@@ -397,11 +400,19 @@ async fn payment_lifecycle<B, P, S>(
                         return;
                     }
 
-                    // Get the time left since this attempt was started.
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .saturating_sub(Duration::from_secs(attempt_time_seconds))
+                    // Get the time left since this attempt was started. Note
+                    // that this is not really the mpp timeout time remaining,
+                    // but it's the mpp timeout minus the start of the payment
+                    // attempt. This is the best we can do without storing the
+                    // start time of every single htlc when it arrives. This
+                    // check is mainly here to not let restarts reset the mpp
+                    // timeout entirely.
+                    params.mpp_timeout.saturating_sub(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .saturating_sub(Duration::from_secs(attempt_time_seconds)),
+                    )
                 }
                 Err(e) => {
                     error!("Failed to await pending payment: {:?}", e);
@@ -427,7 +438,6 @@ async fn payment_lifecycle<B, P, S>(
     tokio::select! {
         _ = tokio::time::sleep(time_left) => {
             debug!("Payment timed out waiting for htlcs.");
-            // TODO: Double-check no payment is in-flight.
             resolve(&payments, &trampoline, HtlcAcceptedResponse::temporary_trampoline_failure(
                 trampoline.routing_policy.clone())).await;
             return;

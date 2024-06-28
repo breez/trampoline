@@ -2,12 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cln_rpc::model::{
     requests::{
-        DatastoreRequest, GetinfoRequest, ListdatastoreRequest, ListpaysRequest,
-        ListpeerchannelsRequest, PayRequest, WaitsendpayRequest,
+        DatastoreRequest, GetinfoRequest, ListdatastoreRequest, PayRequest, WaitsendpayRequest,
     },
     responses::{
-        DatastoreResponse, GetinfoResponse, ListdatastoreResponse, ListpaysResponse,
-        ListpeerchannelsResponse, PayResponse, WaitsendpayResponse,
+        DatastoreResponse, GetinfoResponse, ListdatastoreResponse, PayResponse, WaitsendpayResponse,
     },
 };
 #[cfg(test)]
@@ -21,11 +19,6 @@ pub trait ClnRpc {
         &self,
         request: &ListdatastoreRequest,
     ) -> Result<ListdatastoreResponse, RpcError>;
-    async fn listpays(&self, request: &ListpaysRequest) -> Result<ListpaysResponse, RpcError>;
-    async fn listpeerchannels(
-        &self,
-        request: &ListpeerchannelsRequest,
-    ) -> Result<ListpeerchannelsResponse, RpcError>;
     async fn pay(&self, request: &PayRequest) -> Result<PayResponse, RpcError>;
     async fn waitsendpay(
         &self,
@@ -97,17 +90,6 @@ impl ClnRpc for Rpc {
         &self,
         request: &ListdatastoreRequest,
     ) -> Result<ListdatastoreResponse, RpcError> {
-        Ok(self.rpc().await?.call_typed(request).await?)
-    }
-
-    async fn listpays(&self, request: &ListpaysRequest) -> Result<ListpaysResponse, RpcError> {
-        Ok(self.rpc().await?.call_typed(request).await?)
-    }
-
-    async fn listpeerchannels(
-        &self,
-        request: &ListpeerchannelsRequest,
-    ) -> Result<ListpeerchannelsResponse, RpcError> {
         Ok(self.rpc().await?.call_typed(request).await?)
     }
 

@@ -1,16 +1,13 @@
 use std::{
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use cln_rpc::{
     model::{
-        requests::{
-            ListpaysRequest, ListpaysStatus, ListpeerchannelsRequest, PayRequest,
-            WaitsendpayRequest,
-        },
+        requests::{PayRequest, WaitsendpayRequest},
         responses::PayStatus,
     },
     primitives::Amount,
@@ -41,78 +38,10 @@ pub struct PayPaymentProvider {
     rpc: Arc<Rpc>,
 }
 
-enum PaymentState {
-    Pending,
-    Free,
-    Resolved(Vec<u8>),
-}
-
 impl PayPaymentProvider {
     /// Initializes a new `PayPaymentProvider`
     pub fn new(rpc: Arc<Rpc>) -> Self {
         Self { rpc }
-    }
-
-    /// Checks whether a payment is currently in-flight.
-    async fn check_payment_done(&self, payment_hash: sha256::Hash) -> Result<PaymentState> {
-        // If the payment is complete, ignore any htlc status, because any
-        // trampoline payment can then be claimed from the client.
-        if let Some(preimage) = self
-            .rpc
-            .listpays(&ListpaysRequest {
-                payment_hash: Some(payment_hash),
-                bolt11: None,
-                status: Some(ListpaysStatus::COMPLETE),
-            })
-            .await?
-            .pays
-            .iter()
-            .find_map(|pay| pay.preimage)
-        {
-            return Ok(PaymentState::Resolved(preimage.to_vec()));
-        }
-
-        // If there are pending payments, that means it's pending.
-        if !self
-            .rpc
-            .listpays(&ListpaysRequest {
-                payment_hash: Some(payment_hash),
-                bolt11: None,
-                status: Some(ListpaysStatus::PENDING),
-            })
-            .await?
-            .pays
-            .is_empty()
-        {
-            return Ok(PaymentState::Pending);
-        }
-
-        // If there are any htlcs still in the channel, it is still pending.
-        if self
-            .rpc
-            .listpeerchannels(&ListpeerchannelsRequest { id: None })
-            .await?
-            .channels
-            .map(|channels| {
-                channels.into_iter().any(|channel| {
-                    channel
-                        .htlcs
-                        .map(|htlcs| {
-                            htlcs.iter().any(|htlc| {
-                                htlc.payment_hash
-                                    .map(|htlc_hash| htlc_hash == payment_hash)
-                                    .unwrap_or(false)
-                            })
-                        })
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-        {
-            return Ok(PaymentState::Pending);
-        }
-
-        Ok(PaymentState::Free)
     }
 }
 
@@ -126,22 +55,12 @@ impl PaymentProvider for PayPaymentProvider {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let label = format!("trampoline-{}-{}", req.bolt11, now);
 
-        match self.check_payment_done(req.payment_hash).await? {
-            PaymentState::Pending => {
-                return match self.wait_payment(req.payment_hash).await? {
-                    Some(preimage) => Ok(preimage),
-                    None => Err(anyhow!("payment failed")),
-                };
-            }
-            PaymentState::Free => {}
-            PaymentState::Resolved(preimage) => return Ok(preimage),
-        };
-
         // TODO: extract the failure reason here?
         let resp = self
             .rpc
             .pay(&PayRequest {
                 amount_msat: req.amount_msat.map(Amount::from_msat),
+                partial_msat: None,
                 bolt11: req.bolt11,
                 label: Some(label),
                 riskfactor: Some(20.0),
@@ -213,16 +132,7 @@ impl PaymentProvider for PayPaymentProvider {
             return Ok(Some(preimage));
         };
 
-        loop {
-            match self.check_payment_done(payment_hash).await? {
-                PaymentState::Pending => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                }
-                PaymentState::Free => return Ok(None),
-                PaymentState::Resolved(preimage) => return Ok(Some(preimage)),
-            }
-        }
+        Ok(None)
     }
 }
 

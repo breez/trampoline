@@ -44,8 +44,13 @@ pub struct ClnDatastore {
 #[derive(Serialize, Deserialize)]
 pub enum PaymentState {
     Free,
-    Pending { attempt_id: String, attempt_time_seconds: u64 },
-    Succeeded { preimage: Vec<u8> },
+    Pending {
+        attempt_id: String,
+        attempt_time_seconds: u64,
+    },
+    Succeeded {
+        preimage: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
