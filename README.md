@@ -57,7 +57,8 @@ In order to run the integration tests you need
 - `bitcoind` and `bitcoin-cli` accessible through your `PATH`
 
 #### Running integration tests
-Call `make itest` to only run the integration tests.
+Call `make itest` to only run the integration tests. To run a single test, use
+`PYTEST_OPTS="-k name_of_test" make itest`.
 
 ## Contributing
 Contributions are welcome!

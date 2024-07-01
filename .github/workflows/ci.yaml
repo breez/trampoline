@@ -77,6 +77,10 @@ jobs:
         run: python -m pip install --user virtualenv
 
       - name: Integration tests
+        env:
+          TEST_DEBUG: 1
+          SLOW_MACHINE: 1
+          PYTEST_PAR: 10
         run: make itest
   
   utest:

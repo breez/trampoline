@@ -1,3 +1,18 @@
+CLIPPY_OPTS := -D warnings -A clippy::uninlined-format-args
+
+# (method=thread to support xdist)
+PYTEST_OPTS := -v -p no:logging $(PYTEST_OPTS)
+
+# If we run the tests in parallel we can speed testing up by a lot, however we
+# then don't exit on the first error, since that'd kill the other tester
+# processes and result in loads in loads of output. So we only tell py.test to
+# abort early if we aren't running in parallel.
+ifneq ($(PYTEST_PAR),)
+PYTEST_OPTS += -n=$(PYTEST_PAR)
+else
+PYTEST_OPTS += -x
+endif
+
 build: 
 	cargo build
 
@@ -16,8 +31,8 @@ clean-rust:
 	rm -rf target
 
 clippy:
-	cargo clippy -- -D warnings -A clippy::uninlined-format-args
-	cargo clippy --tests -- -D warnings -A clippy::uninlined-format-args
+	cargo clippy -- $(CLIPPY_OPTS)
+	cargo clippy --tests -- $(CLIPPY_OPTS)
 
 fmt:
 	cargo fmt
@@ -26,7 +41,7 @@ fmt-check:
 	cargo fmt -- --check
 
 itest: build itest-env
-	. itest-env/bin/activate; itest-env/bin/pytest itest/tests
+	. itest-env/bin/activate; itest-env/bin/pytest itest/tests $(PYTEST_OPTS)
 
 itest-env:
 	virtualenv itest-env --python=$(which python3) --download --always-copy --clear
