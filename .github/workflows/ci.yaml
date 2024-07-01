@@ -22,6 +22,9 @@ jobs:
           rustup set auto-self-update disable
           rustup toolchain install stable --profile minimal
 
+      - name: Install virtualenv
+        run: python -m pip install --user virtualenv
+
       - name: Run Format check
         run: make fmt-check
   
