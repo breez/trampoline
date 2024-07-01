@@ -7,10 +7,16 @@ from pyln.proto.onion import TlvPayload
 plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampoline")
 hodl_plugin_path = os.path.join(os.path.dirname(__file__), "hodl_plugin.py")
 
-def setup(node_factory, hodl_plugin=False, may_reconnect=False):
+def connect_nodes(sender, trampoline, recipient):
+    sender.openchannel(trampoline, 1000000)
+    trampoline.openchannel(recipient, 1000000)
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in sender.rpc.listpeerchannels()['channels']))
+    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']))
+
+def setup(node_factory, hodl_plugin=False, may_reconnect=False, connect_nodes=connect_nodes):
     sender_opts = {}
     recipient_opts = {}
-    trampoline_opts = {'plugin': plugin_path}
+    trampoline_opts = {'plugin': plugin_path, 'trampoline-mpp-timeout': '15'}
     if hodl_plugin:
         recipient_opts['plugin'] = hodl_plugin_path
     
@@ -26,13 +32,11 @@ def setup(node_factory, hodl_plugin=False, may_reconnect=False):
     except Exception:
         trampoline.daemon.stop()
         raise
-    sender.openchannel(trampoline, 1000000)
-    trampoline.openchannel(recipient, 1000000)
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in sender.rpc.listpeerchannels()['channels']))
-    wait_for(lambda: all(channel['state'] == 'CHANNELD_NORMAL' for channel in trampoline.rpc.listpeerchannels()['channels']))
+
+    connect_nodes(sender, trampoline, recipient)
     return sender, trampoline, recipient
 
-def send_onion(sender, trampoline, invoice, amount_msat, total_msat, delay=1008):
+def send_onion(sender, trampoline, invoice, amount_msat, total_msat, delay=1008, partid=0, groupid=0):
     def truncate_encode(i: int):
         """Encode a tu64 (or tu32 etc) value"""
         ret = struct.pack("!Q", i)
@@ -74,5 +78,10 @@ def send_onion(sender, trampoline, invoice, amount_msat, total_msat, delay=1008)
         "delay": delay
     }
     onion = sender.rpc.createonion(hops=hops, assocdata=invoice['payment_hash'])
-    sender.rpc.sendonion(onion=onion['onion'], first_hop=first_hop,
-                     payment_hash=invoice['payment_hash'])
+    sender.rpc.call("sendonion", {
+        "onion": onion['onion'],
+        "first_hop": first_hop,
+        "payment_hash": invoice['payment_hash'],
+        "partid": partid,
+        "groupid": groupid
+    })
