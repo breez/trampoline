@@ -13,6 +13,14 @@ else
 PYTEST_OPTS += -x
 endif
 
+# Set the individual test timeout
+ifneq ($(SLOW_MACHINE),)
+PYTEST_OPTS += --timeout 180
+else
+PYTEST_OPTS += --timeout 30
+endif
+
+
 build: 
 	cargo build
 
