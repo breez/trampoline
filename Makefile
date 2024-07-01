@@ -46,7 +46,7 @@ fmt: fmt-python fmt-rust
 
 fmt-check: fmt-check-python fmt-check-rust
 
-fmt-check-python:
+fmt-check-python: itest-env
 	itest-env/bin/black ./itest --check
 
 fmt-check-rust:
