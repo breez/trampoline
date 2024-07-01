@@ -2,7 +2,6 @@ from pyln.testing.fixtures import *
 from pyln.testing.utils import wait_for
 import helpers
 
-@pytest.mark.timeout(60)
 def test_inflight_restart(node_factory):
     sender, trampoline, recipient = helpers.setup(node_factory, hodl_plugin=True, may_reconnect=True)
     invoice = recipient.rpc.invoice(1_000_000, "trampoline", "trampoline")

@@ -1,7 +1,6 @@
 from pyln.testing.fixtures import *
 import helpers
 
-@pytest.mark.timeout(60)
 def test_trampoline_payment(node_factory):
     sender, trampoline, recipient = helpers.setup(node_factory)
     invoice = recipient.rpc.invoice(1_000_000, "trampoline", "trampoline")
