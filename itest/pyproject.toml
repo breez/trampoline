@@ -7,6 +7,7 @@ authors = [
 ]
 license = {text = "MIT"}
 dependencies = [
+    'black',
     'pytest-timeout == 2.1.0',
     'pytest-xdist == 2.5.0',
     'pytest == 7.1.2',

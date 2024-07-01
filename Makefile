@@ -42,11 +42,21 @@ clippy:
 	cargo clippy -- $(CLIPPY_OPTS)
 	cargo clippy --tests -- $(CLIPPY_OPTS)
 
-fmt:
-	cargo fmt
+fmt: fmt-python fmt-rust
 
-fmt-check:
+fmt-check: fmt-check-python fmt-check-rust
+
+fmt-check-python:
+	itest-env/bin/black ./itest --check
+
+fmt-check-rust:
 	cargo fmt -- --check
+
+fmt-python: itest-env
+	itest-env/bin/black ./itest
+
+fmt-rust:
+	cargo fmt
 
 itest: build itest-env
 	. itest-env/bin/activate; itest-env/bin/pytest itest/tests $(PYTEST_OPTS)
