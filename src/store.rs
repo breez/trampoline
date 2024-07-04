@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use cln_rpc::model::requests::{DatastoreMode, DatastoreRequest, ListdatastoreRequest};
 use hex::ToHex;
@@ -71,6 +71,7 @@ impl Datastore for ClnDatastore {
     async fn add_payment_attempt(&self, trampoline: &TrampolineInfo) -> Result<AttemptId> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
+            .context("duration since unix epoch should always work")
             .unwrap();
         let attempt_id = now.as_nanos().to_string();
         let state = PaymentState::Pending {

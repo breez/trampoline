@@ -4,7 +4,7 @@ use lightning_invoice::Bolt11Invoice;
 use secp256k1::PublicKey;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use secp256k1::hashes::sha256::Hash;
 use tracing::{debug, error, field, instrument, trace};
 
@@ -168,7 +168,10 @@ where
             payment_state.add_htlc(req, sender).await;
         }
 
-        let resp = receiver.await.unwrap();
+        let resp = receiver
+            .await
+            .context("receiver defined in the same function is gone")
+            .unwrap();
         debug!("returning {:?}", resp);
         resp
     }
@@ -289,6 +292,7 @@ where
                     );
                     None
                 } else {
+                    // An 8 byte vector should always be convertable into [u8;8]
                     Some(u64::from_be_bytes(amount_blob.value.try_into().unwrap()))
                 }
             }
@@ -410,6 +414,7 @@ async fn payment_lifecycle<B, P, S>(
                     params.mpp_timeout.saturating_sub(
                         std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
+                            .context("duration since unix epoch should always work")
                             .unwrap()
                             .saturating_sub(Duration::from_secs(attempt_time_seconds)),
                     )
