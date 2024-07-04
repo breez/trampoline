@@ -58,7 +58,8 @@ In order to run the integration tests you need
 
 #### Running integration tests
 Call `make itest` to only run the integration tests. To run a single test, use
-`PYTEST_OPTS="-k name_of_test" make itest`.
+`PYTEST_OPTS="-k name_of_test" make itest`. To run tests in parallel, use
+`PYTEST_PAR=10 make itest`.
 
 ## Contributing
 Contributions are welcome!
