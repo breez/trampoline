@@ -179,6 +179,11 @@ where
     /// Checks whether this htlc belongs to a trampoline payment and returns the
     /// relevant info if so, otherwise returns the appropriate result for the
     /// htlc.
+    /// Note this function only checks whether the htlc is a trampoline htlc. It
+    /// does not check vltc expiry or fee settings, because they may change when
+    /// the node is restarted and the htlc is replayed. A payment may already be
+    /// in-flight All those checks should be done in `handle_htlc`, making the
+    /// payment lifecycle resposible for failing back the htlcs.
     fn check_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcCheckResult {
         // For trampoline payments we appear to be the destination. If we're not the
         // destination, continue.
