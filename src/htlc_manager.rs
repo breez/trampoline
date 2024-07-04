@@ -694,7 +694,10 @@ enum HtlcCheckResult {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
 
     use anyhow::anyhow;
     use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
@@ -720,270 +723,302 @@ mod tests {
 
     use super::HtlcManagerParams;
 
-    fn cltv_delta() -> u16 {
-        34
-    }
-
-    fn htlc_manager(
+    struct TestData {
+        block_provider: MockBlockProvider,
+        cltv_delta: u16,
+        invoice_amount: u64,
+        local_pubkey: PublicKey,
+        mpp_timeout: Duration,
         payment_provider: MockPaymentProvider,
-    ) -> HtlcManager<MockBlockProvider, MockPaymentProvider, MockDatastore> {
-        let mut block_provider = MockBlockProvider::new();
-        block_provider.expect_current_height().returning(|| 0);
-        let mut store = MockDatastore::new();
-        store
-            .expect_fetch_payment_info()
-            .return_once(|_| Ok(crate::store::PaymentState::Free));
-        store.expect_add_payment_attempt().returning(|_| {
-            Ok(AttemptId {
-                attempt_id: String::from("0"),
-                state_generation: 0,
+        preimage: [u8; 32],
+        policy: TrampolineRoutingPolicy,
+        sender_amount: u64,
+        store: MockDatastore,
+        total_amount: u64,
+    }
+
+    impl TestData {
+        fn default() -> Self {
+            let mut block_provider = MockBlockProvider::new();
+            block_provider.expect_current_height().returning(|| 0);
+            let mut store = MockDatastore::new();
+            store
+                .expect_fetch_payment_info()
+                .returning(|_| Ok(crate::store::PaymentState::Free));
+            store.expect_add_payment_attempt().returning(|_| {
+                Ok(AttemptId {
+                    attempt_id: String::from("0"),
+                    state_generation: 0,
+                })
+            });
+
+            let private_key = SecretKey::from_slice(
+                &[
+                    0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f,
+                    0xe2, 0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04,
+                    0xa8, 0xca, 0x3b, 0x2d, 0xb7, 0x34,
+                ][..],
+            )
+            .unwrap();
+            let local_pubkey = PublicKey::from_secret_key(&Secp256k1::new(), &private_key);
+            Self {
+                block_provider,
+                cltv_delta: 34,
+                invoice_amount: 1_000_000,
+                local_pubkey,
+                mpp_timeout: Duration::from_millis(50),
+                payment_provider: MockPaymentProvider::new(),
+                preimage: preimage1(),
+                policy: TrampolineRoutingPolicy {
+                    cltv_expiry_delta: 1008,
+                    fee_base_msat: 0,
+                    fee_proportional_millionths: 5000,
+                },
+                sender_amount: 1_005_000,
+                store,
+                total_amount: 1_005_000,
+            }
+        }
+
+        fn htlc_manager(
+            self,
+        ) -> HtlcManager<MockBlockProvider, MockPaymentProvider, MockDatastore> {
+            HtlcManager::new(HtlcManagerParams {
+                allow_self_route_hints: true,
+                block_provider: Arc::new(self.block_provider),
+                cltv_delta: self.cltv_delta,
+                local_pubkey: self.local_pubkey,
+                mpp_timeout: self.mpp_timeout,
+                payment_provider: Arc::new(self.payment_provider),
+                routing_policy: self.policy.clone(),
+                store: Arc::new(self.store),
             })
-        });
-        store.expect_mark_failed().returning(|_, _| Ok(()));
-        store.expect_mark_succeeded().returning(|_, _, _| Ok(()));
-        HtlcManager::new(HtlcManagerParams {
-            allow_self_route_hints: true,
-            block_provider: Arc::new(block_provider),
-            cltv_delta: cltv_delta(),
-            local_pubkey: local_pubkey(),
-            mpp_timeout: mpp_timeout(),
-            payment_provider: Arc::new(payment_provider),
-            routing_policy: policy(),
-            store: Arc::new(store),
-        })
-    }
+        }
 
-    fn invoice_amount() -> u64 {
-        1_000_000
-    }
+        fn invoice_bytes(&self) -> Vec<u8> {
+            self.invoice_string().as_bytes().to_vec()
+        }
 
-    fn invoice_bytes() -> Vec<u8> {
-        invoice_string().as_bytes().to_vec()
-    }
-
-    fn invoice_string() -> String {
-        let private_key = SecretKey::from_slice(
-            &[
-                0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f, 0xe2,
-                0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04, 0xa8, 0xca,
-                0x3b, 0x2d, 0xb7, 0x35,
-            ][..],
-        )
-        .unwrap();
-
-        let payment_secret = PaymentSecret([42u8; 32]);
-
-        let invoice = InvoiceBuilder::new(Currency::Bitcoin)
-            .description("Trampoline this".into())
-            .amount_milli_satoshis(invoice_amount())
-            .payment_hash(payment_hash())
-            .payment_secret(payment_secret)
-            .current_timestamp()
-            .min_final_cltv_expiry_delta(144)
-            .build_signed(|hash| Secp256k1::new().sign_ecdsa_recoverable(hash, &private_key))
+        fn invoice_string(&self) -> String {
+            let private_key = SecretKey::from_slice(
+                &[
+                    0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f,
+                    0xe2, 0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04,
+                    0xa8, 0xca, 0x3b, 0x2d, 0xb7, 0x35,
+                ][..],
+            )
             .unwrap();
 
-        invoice.to_string()
-    }
+            let payment_secret = PaymentSecret([42u8; 32]);
 
-    fn local_pubkey() -> PublicKey {
-        let private_key = SecretKey::from_slice(
-            &[
-                0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f, 0xe2,
-                0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04, 0xa8, 0xca,
-                0x3b, 0x2d, 0xb7, 0x34,
-            ][..],
-        )
-        .unwrap();
-        PublicKey::from_secret_key(&Secp256k1::new(), &private_key)
-    }
+            let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+                .description("Trampoline this".into())
+                .amount_milli_satoshis(self.invoice_amount)
+                .payment_hash(self.payment_hash())
+                .payment_secret(payment_secret)
+                .timestamp(SystemTime::UNIX_EPOCH)
+                .min_final_cltv_expiry_delta(144)
+                .build_signed(|hash| Secp256k1::new().sign_ecdsa_recoverable(hash, &private_key))
+                .unwrap();
 
-    fn mpp_timeout() -> Duration {
-        Duration::from_millis(50)
-    }
+            invoice.to_string()
+        }
 
-    fn payment_hash() -> sha256::Hash {
-        sha256::Hash::hash(&preimage())
-    }
+        fn payment_hash(&self) -> sha256::Hash {
+            sha256::Hash::hash(&self.preimage)
+        }
 
-    fn payment_provider() -> MockPaymentProvider {
-        MockPaymentProvider::new()
-    }
+        fn payment_hash_vec(&self) -> Vec<u8> {
+            self.payment_hash().to_byte_array().to_vec()
+        }
 
-    fn preimage() -> [u8; 32] {
-        [0u8; 32]
-    }
+        fn request(&self) -> HtlcAcceptedRequest {
+            HtlcAcceptedRequest {
+                htlc: Htlc {
+                    amount_msat: self.sender_amount,
+                    id: 0,
+                    cltv_expiry: self.policy.cltv_expiry_delta as u32,
+                    cltv_expiry_relative: self.policy.cltv_expiry_delta as i64,
+                    payment_hash: self.payment_hash_vec(),
+                    short_channel_id: "0x0x0".parse().unwrap(),
+                },
+                onion: Onion {
+                    forward_msat: self.sender_amount,
+                    outgoing_cltv_value: 0,
+                    payload: vec![TlvEntry {
+                        typ: 33001,
+                        value: self.invoice_bytes(),
+                    }]
+                    .into(),
+                    short_channel_id: None,
+                    total_msat: Some(self.total_amount),
+                },
+            }
+        }
 
-    fn policy() -> TrampolineRoutingPolicy {
-        TrampolineRoutingPolicy {
-            cltv_expiry_delta: 586,
-            fee_base_msat: 0,
-            fee_proportional_millionths: 5000,
+        fn temporary_trampoline_failure(&self) -> Vec<u8> {
+            HtlcFailReason::TemporaryTrampolineFailure(self.policy.clone()).encode()
         }
     }
 
-    fn request(amount_msat: u64) -> HtlcAcceptedRequest {
-        HtlcAcceptedRequest {
-            htlc: Htlc {
-                amount_msat,
-                id: 0,
-                cltv_expiry: 586,
-                cltv_expiry_relative: 586,
-                payment_hash: (0..32).collect(),
-                short_channel_id: "0x0x0".parse().unwrap(),
-            },
-            onion: Onion {
-                forward_msat: amount_msat,
-                outgoing_cltv_value: 0,
-                payload: vec![TlvEntry {
-                    typ: 33001,
-                    value: invoice_bytes(),
-                }]
-                .into(),
-                short_channel_id: None,
-                total_msat: Some(sender_amount()),
-            },
-        }
+    fn preimage1() -> [u8; 32] {
+        [0; 32]
     }
 
-    fn sender_amount() -> u64 {
-        1_005_000
-    }
-
-    fn temporary_trampoline_failure() -> Vec<u8> {
-        HtlcFailReason::TemporaryTrampolineFailure(policy()).encode()
+    fn preimage2() -> [u8; 32] {
+        [1; 32]
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_regular_forward() {
-        let payment_provider = payment_provider();
-        let manager = htlc_manager(payment_provider);
-        let mut request = request(sender_amount());
+        let test = TestData::default();
+        let mut request = test.request();
         request.onion.short_channel_id = Some("0x0x0".parse().unwrap());
+        let manager = test.htlc_manager();
 
         let result = manager.handle_htlc(&request).await;
 
-        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
+        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_receive_without_invoice() {
-        let payment_provider = payment_provider();
-        let manager = htlc_manager(payment_provider);
-        let mut request = request(sender_amount());
+        let test = TestData::default();
+        let mut request = test.request();
         request.onion.payload = SerializedTlvStream::from(vec![]);
+        let manager = test.htlc_manager();
 
         let result = manager.handle_htlc(&request).await;
 
-        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)))
+        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_single_htlc_success() {
-        let mut payment_provider = payment_provider();
-        let pay_result = Ok(preimage().to_vec());
-        payment_provider.expect_pay().return_once(|_| pay_result);
-        let manager = htlc_manager(payment_provider);
+        let mut test = TestData::default();
+        let pay_result = Ok(test.preimage.to_vec());
+        test.payment_provider
+            .expect_pay()
+            .return_once(|_| pay_result);
+        let preimage = test.preimage.to_vec();
+        let request = test.request();
+        let manager = test.htlc_manager();
 
-        let result = manager.handle_htlc(&request(sender_amount())).await;
+        let result = manager.handle_htlc(&request).await;
 
-        let preimage = preimage().to_vec();
         assert!(
             matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
         let payments = manager.payments.lock().await;
-        assert_eq!(0, payments.len())
+        assert_eq!(0, payments.len());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_single_htlc_overpay_success() {
-        let mut payment_provider = payment_provider();
-        let pay_result = Ok(preimage().to_vec());
-        let sender_amount = sender_amount() + 1;
+        let mut test = TestData::default();
+        test.sender_amount += 1;
+        let pay_result = Ok(test.preimage.to_vec());
 
         // Note the fee scales with the sender's overpayment
-        let max_fee_msat = sender_amount - invoice_amount();
-        payment_provider
+        let max_fee_msat = test.sender_amount - test.invoice_amount;
+        let expected_req = PaymentRequest {
+            bolt11: test.invoice_string(),
+            payment_hash: test.payment_hash(),
+            amount_msat: None,
+            max_fee_msat,
+            max_cltv_delta: test.policy.cltv_expiry_delta - test.cltv_delta,
+        };
+        test.payment_provider
             .expect_pay()
-            .with(eq(PaymentRequest {
-                bolt11: invoice_string(),
-                payment_hash: payment_hash(),
-                amount_msat: None,
-                max_fee_msat,
-                max_cltv_delta: policy().cltv_expiry_delta - cltv_delta(),
-            }))
+            .with(eq(expected_req))
             .return_once(|_| pay_result);
-        let manager = htlc_manager(payment_provider);
+        let preimage = test.preimage.to_vec();
+        let request = test.request();
+        let manager = test.htlc_manager();
 
-        let result = manager.handle_htlc(&request(sender_amount)).await;
+        let result = manager.handle_htlc(&request).await;
 
-        let preimage = preimage().to_vec();
         assert!(
             matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
         let payments = manager.payments.lock().await;
-        assert_eq!(0, payments.len())
+        assert_eq!(0, payments.len());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_single_htlc_payment_failure() {
-        let mut payment_provider = payment_provider();
+        let mut test = TestData::default();
         let pay_result = Err(anyhow!("payment failed"));
-        payment_provider.expect_pay().return_once(|_| pay_result);
-        let manager = htlc_manager(payment_provider);
+        test.payment_provider
+            .expect_pay()
+            .return_once(|_| pay_result);
+        let request = test.request();
+        let failure = test.temporary_trampoline_failure();
+        let manager = test.htlc_manager();
 
-        let result = manager.handle_htlc(&request(sender_amount())).await;
+        let result = manager.handle_htlc(&request).await;
 
-        let failure = temporary_trampoline_failure();
         assert!(
             matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
         let payments = manager.payments.lock().await;
-        assert_eq!(0, payments.len())
+        assert_eq!(0, payments.len());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_single_htlc_too_low_times_out() {
-        let manager = htlc_manager(payment_provider());
-        let amount = sender_amount() - 1;
+        let mut test = TestData::default();
+        test.sender_amount -= 1;
+        let request = test.request();
+        let mpp_timeout = test.mpp_timeout;
+        let failure = test.temporary_trampoline_failure();
+        let manager = test.htlc_manager();
 
         let start = tokio::time::Instant::now();
-        let result = manager.handle_htlc(&request(amount)).await;
+        let result = manager.handle_htlc(&request).await;
         let end = tokio::time::Instant::now();
 
         let elapsed = end - start;
-        assert!(elapsed.ge(&mpp_timeout()));
-
-        let failure = temporary_trampoline_failure();
+        assert!(elapsed.ge(&mpp_timeout));
         assert!(
             matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_two_htlc_success() {
-        let mut payment_provider = payment_provider();
-        let pay_result = Ok(preimage().to_vec());
-        payment_provider.expect_pay().return_once(|_| pay_result);
-        let manager = htlc_manager(payment_provider);
-        let amount1 = 1;
-        let amount2 = sender_amount() - amount1;
-        let request1 = request(amount1);
-        let request2 = request(amount2);
+        let mut test1 = TestData::default();
+        test1.sender_amount = 1;
+        let request1 = test1.request();
+        let mut test2 = TestData::default();
+        test2.sender_amount -= 1;
+        let request2 = test2.request();
+        let preimage = test1.preimage.to_vec();
+        let pay_result = Ok(test1.preimage.to_vec());
+        test1
+            .payment_provider
+            .expect_pay()
+            .return_once(|_| pay_result);
+        let manager = test1.htlc_manager();
 
         let (result1, result2) = join!(
             manager.handle_htlc(&request1),
             manager.handle_htlc(&request2)
         );
 
-        let preimage = preimage().to_vec();
         assert!(
             matches!(result1, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
@@ -991,27 +1026,31 @@ mod tests {
             matches!(result2, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
         let payments = manager.payments.lock().await;
-        assert_eq!(0, payments.len())
+        assert_eq!(0, payments.len());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_two_htlc_failure() {
-        let mut payment_provider = payment_provider();
+        let mut test1 = TestData::default();
+        test1.sender_amount = 1;
+        let request1 = test1.request();
+        let mut test2 = TestData::default();
+        test2.sender_amount -= 1;
+        let request2 = test2.request();
+        let failure = test1.temporary_trampoline_failure();
         let pay_result = Err(anyhow!("Payment failed"));
-        payment_provider.expect_pay().return_once(|_| pay_result);
-        let manager = htlc_manager(payment_provider);
-        let amount1 = 1;
-        let amount2 = sender_amount() - amount1;
-        let request1 = request(amount1);
-        let request2 = request(amount2);
+        test1
+            .payment_provider
+            .expect_pay()
+            .return_once(|_| pay_result);
+        let manager = test1.htlc_manager();
 
         let (result1, result2) = join!(
             manager.handle_htlc(&request1),
             manager.handle_htlc(&request2)
         );
 
-        let failure = temporary_trampoline_failure();
         assert!(
             matches!(result1, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
@@ -1019,6 +1058,39 @@ mod tests {
             matches!(result2, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
         let payments = manager.payments.lock().await;
-        assert_eq!(0, payments.len())
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_two_htlcs_different_preimage_times_out() {
+        let mut test1 = TestData::default();
+        test1.sender_amount -= 1;
+        let request1 = test1.request();
+        let mut test2 = TestData::default();
+        test2.preimage = preimage2();
+        test2.sender_amount -= 1;
+        let request2 = test2.request();
+        let mpp_timeout = test1.mpp_timeout;
+        let failure = test1.temporary_trampoline_failure();
+        let manager = test1.htlc_manager();
+
+        let start = tokio::time::Instant::now();
+        let (result1, result2) = join!(
+            manager.handle_htlc(&request1),
+            manager.handle_htlc(&request2)
+        );
+        let end = tokio::time::Instant::now();
+
+        let elapsed = end - start;
+        assert!(elapsed.ge(&mpp_timeout));
+        assert!(
+            matches!(result1, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
+        );
+        assert!(
+            matches!(result2, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
     }
 }
