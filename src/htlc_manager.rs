@@ -731,7 +731,9 @@ mod tests {
     };
 
     use anyhow::anyhow;
-    use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
+    use lightning_invoice::{
+        Currency, InvoiceBuilder, PaymentSecret, RouteHint, RouteHintHop, RoutingFees,
+    };
     use mockall::predicate::eq;
     use secp256k1::{
         hashes::{sha256, Hash},
@@ -755,9 +757,12 @@ mod tests {
     use super::HtlcManagerParams;
 
     struct TestData {
+        allow_self_route_hints: bool,
         block_provider: MockBlockProvider,
         cltv_delta: u16,
+        destination_privkey: SecretKey,
         invoice_amount: u64,
+        invoice_route_hint: Option<RouteHint>,
         local_pubkey: PublicKey,
         mpp_timeout: Duration,
         payment_provider: MockPaymentProvider,
@@ -792,10 +797,22 @@ mod tests {
             )
             .unwrap();
             let local_pubkey = PublicKey::from_secret_key(&Secp256k1::new(), &private_key);
+
+            let destination_privkey = SecretKey::from_slice(
+                &[
+                    0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f,
+                    0xe2, 0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04,
+                    0xa8, 0xca, 0x3b, 0x2d, 0xb7, 0x35,
+                ][..],
+            )
+            .unwrap();
             Self {
+                allow_self_route_hints: true,
                 block_provider,
                 cltv_delta: 34,
+                destination_privkey,
                 invoice_amount: 1_000_000,
+                invoice_route_hint: None,
                 local_pubkey,
                 mpp_timeout: Duration::from_millis(50),
                 payment_provider: MockPaymentProvider::new(),
@@ -815,7 +832,7 @@ mod tests {
             self,
         ) -> HtlcManager<MockBlockProvider, MockPaymentProvider, MockDatastore> {
             HtlcManager::new(HtlcManagerParams {
-                allow_self_route_hints: true,
+                allow_self_route_hints: self.allow_self_route_hints,
                 block_provider: Arc::new(self.block_provider),
                 cltv_delta: self.cltv_delta,
                 local_pubkey: self.local_pubkey,
@@ -831,25 +848,24 @@ mod tests {
         }
 
         fn invoice_string(&self) -> String {
-            let private_key = SecretKey::from_slice(
-                &[
-                    0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f,
-                    0xe2, 0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04,
-                    0xa8, 0xca, 0x3b, 0x2d, 0xb7, 0x35,
-                ][..],
-            )
-            .unwrap();
-
             let payment_secret = PaymentSecret([42u8; 32]);
 
-            let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+            let mut invoice = InvoiceBuilder::new(Currency::Bitcoin)
                 .description("Trampoline this".into())
                 .amount_milli_satoshis(self.invoice_amount)
                 .payment_hash(self.payment_hash())
                 .payment_secret(payment_secret)
                 .timestamp(SystemTime::UNIX_EPOCH)
-                .min_final_cltv_expiry_delta(144)
-                .build_signed(|hash| Secp256k1::new().sign_ecdsa_recoverable(hash, &private_key))
+                .min_final_cltv_expiry_delta(144);
+
+            if let Some(hint) = &self.invoice_route_hint {
+                invoice = invoice.private_route(hint.clone());
+            }
+
+            let invoice = invoice
+                .build_signed(|hash| {
+                    Secp256k1::new().sign_ecdsa_recoverable(hash, &self.destination_privkey)
+                })
                 .unwrap();
 
             invoice.to_string()
@@ -885,6 +901,20 @@ mod tests {
                     total_msat: Some(self.total_amount),
                 },
             }
+        }
+
+        fn set_self_route_hint(&mut self) {
+            self.invoice_route_hint = Some(RouteHint(vec![RouteHintHop {
+                cltv_expiry_delta: 80,
+                fees: RoutingFees {
+                    base_msat: 1000,
+                    proportional_millionths: 10,
+                },
+                htlc_maximum_msat: Some(1_000_000),
+                htlc_minimum_msat: Some(1_000),
+                short_channel_id: 0,
+                src_node_id: self.local_pubkey,
+            }]));
         }
 
         fn temporary_trampoline_failure(&self) -> Vec<u8> {
@@ -1261,6 +1291,65 @@ mod tests {
 
         assert!(
             matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_local_destination() {
+        let mut test = TestData::default();
+        test.local_pubkey =
+            PublicKey::from_secret_key(&Secp256k1::new(), &test.destination_privkey);
+        let request = test.request();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_self_route_hint_allowed() {
+        let mut test = TestData::default();
+        test.allow_self_route_hints = true;
+        test.set_self_route_hint();
+        let request = test.request();
+        let preimage = test.preimage.to_vec();
+        test.payment_provider
+            .expect_pay()
+            .return_once(|_| Ok(preimage))
+            .once();
+        let preimage = test.preimage.to_vec();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_self_route_hint_disallowed() {
+        let mut test = TestData::default();
+        test.allow_self_route_hints = false;
+        test.set_self_route_hint();
+        let request = test.request();
+        let failure = HtlcFailReason::TemporaryNodeFailure.encode();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
         let payments = manager.payments.lock().await;
         assert_eq!(0, payments.len());
