@@ -761,7 +761,7 @@ mod tests {
         block_provider: MockBlockProvider,
         cltv_delta: u16,
         destination_privkey: SecretKey,
-        invoice_amount: u64,
+        invoice_amount: Option<u64>,
         invoice_route_hint: Option<RouteHint>,
         local_pubkey: PublicKey,
         mpp_timeout: Duration,
@@ -811,7 +811,7 @@ mod tests {
                 block_provider,
                 cltv_delta: 34,
                 destination_privkey,
-                invoice_amount: 1_000_000,
+                invoice_amount: Some(1_000_000),
                 invoice_route_hint: None,
                 local_pubkey,
                 mpp_timeout: Duration::from_millis(50),
@@ -852,11 +852,14 @@ mod tests {
 
             let mut invoice = InvoiceBuilder::new(Currency::Bitcoin)
                 .description("Trampoline this".into())
-                .amount_milli_satoshis(self.invoice_amount)
                 .payment_hash(self.payment_hash())
                 .payment_secret(payment_secret)
                 .timestamp(SystemTime::UNIX_EPOCH)
                 .min_final_cltv_expiry_delta(144);
+
+            if let Some(amount) = self.invoice_amount {
+                invoice = invoice.amount_milli_satoshis(amount)
+            }
 
             if let Some(hint) = &self.invoice_route_hint {
                 invoice = invoice.private_route(hint.clone());
@@ -990,7 +993,7 @@ mod tests {
         let pay_result = Ok(test.preimage.to_vec());
 
         // Note the fee scales with the sender's overpayment
-        let max_fee_msat = test.sender_amount - test.invoice_amount;
+        let max_fee_msat = test.sender_amount - test.invoice_amount.unwrap();
         let expected_req = PaymentRequest {
             bolt11: test.invoice_string(),
             payment_hash: test.payment_hash(),
@@ -1351,6 +1354,102 @@ mod tests {
         assert!(
             matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
         );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_invalid_invoice() {
+        let test = TestData::default();
+        let mut request = test.request();
+        request.onion.payload = vec![TlvEntry {
+            typ: 33001,
+            value: "lnbc1".as_bytes().to_vec(),
+        }]
+        .into();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_invalid_invoice_invalid_utf8() {
+        let test = TestData::default();
+        let mut request = test.request();
+        request.onion.payload = vec![TlvEntry {
+            typ: 33001,
+            value: vec![0xc3, 0x28],
+        }]
+        .into();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_zero_amount_invoice_with_amount() {
+        let mut test = TestData::default();
+        test.invoice_amount = None;
+        let mut request = test.request();
+        request.onion.payload = vec![
+            TlvEntry {
+                typ: 33001,
+                value: test.invoice_bytes(),
+            },
+            TlvEntry {
+                typ: 33003,
+                value: 1_000_000u64.to_be_bytes().to_vec(),
+            },
+        ]
+        .into();
+        let preimage = test.preimage.to_vec();
+        let pay_req = PaymentRequest {
+            amount_msat: Some(1_000_000),
+            bolt11: test.invoice_string(),
+            max_cltv_delta: test.policy.cltv_expiry_delta - test.cltv_delta,
+            max_fee_msat: test.sender_amount - 1_000_000,
+            payment_hash: test.payment_hash(),
+        };
+        test.payment_provider
+            .expect_pay()
+            .with(eq(pay_req))
+            .return_once(|_| Ok(preimage))
+            .once();
+        let preimage = test.preimage.to_vec();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_zero_amount_invoice_without_amount() {
+        let mut test = TestData::default();
+        test.invoice_amount = None;
+        let request = test.request();
+        test.payment_provider.expect_pay().never();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
         let payments = manager.payments.lock().await;
         assert_eq!(0, payments.len());
     }
