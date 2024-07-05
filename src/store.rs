@@ -24,7 +24,7 @@ pub trait Datastore {
     async fn mark_succeeded(
         &self,
         trampoline: &TrampolineInfo,
-        attempt_id: String,
+        attempt_id: &AttemptId,
         preimage: Vec<u8>,
     ) -> Result<()>;
 }
@@ -41,8 +41,38 @@ pub struct ClnDatastore {
     rpc: Arc<Rpc>,
 }
 
-#[derive(Serialize, Deserialize)]
 pub enum PaymentState {
+    Free,
+    Pending {
+        attempt_id: AttemptId,
+        attempt_time_seconds: u64,
+    },
+    Succeeded {
+        preimage: Vec<u8>,
+    },
+}
+
+impl PaymentState {
+    fn from(state: PersistPaymentState, generation: Option<u64>) -> Self {
+        match state {
+            PersistPaymentState::Free => PaymentState::Free,
+            PersistPaymentState::Pending {
+                attempt_id,
+                attempt_time_seconds,
+            } => PaymentState::Pending {
+                attempt_id: AttemptId {
+                    attempt_id,
+                    state_generation: generation.unwrap_or(0),
+                },
+                attempt_time_seconds,
+            },
+            PersistPaymentState::Succeeded { preimage } => PaymentState::Succeeded { preimage },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+enum PersistPaymentState {
     Free,
     Pending {
         attempt_id: String,
@@ -53,7 +83,7 @@ pub enum PaymentState {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AttemptId {
     pub attempt_id: String,
     pub state_generation: u64,
@@ -74,7 +104,7 @@ impl Datastore for ClnDatastore {
             .context("duration since unix epoch should always work")
             .unwrap();
         let attempt_id = now.as_nanos().to_string();
-        let state = PaymentState::Pending {
+        let state = PersistPaymentState::Pending {
             attempt_id: attempt_id.clone(),
             attempt_time_seconds: now.as_secs(),
         };
@@ -129,7 +159,9 @@ impl Datastore for ClnDatastore {
                 .nth(0)
             {
                 Some(state) => {
-                    serde_json::from_str(&state.string.ok_or(anyhow!("state missing"))?)?
+                    let des: PersistPaymentState =
+                        serde_json::from_str(&state.string.ok_or(anyhow!("state missing"))?)?;
+                    PaymentState::from(des, state.generation)
                 }
                 None => PaymentState::Free,
             },
@@ -157,7 +189,7 @@ impl Datastore for ClnDatastore {
                 generation: None,
             })
             .await?;
-        let state = PaymentState::Free;
+        let state = PersistPaymentState::Free;
         let state = serde_json::to_string(&state)?;
         self.rpc
             .datastore(&DatastoreRequest {
@@ -176,10 +208,10 @@ impl Datastore for ClnDatastore {
     async fn mark_succeeded(
         &self,
         trampoline: &TrampolineInfo,
-        attempt_id: String,
+        attempt_id: &AttemptId,
         preimage: Vec<u8>,
     ) -> Result<()> {
-        let state = PaymentState::Succeeded { preimage };
+        let state = PersistPaymentState::Succeeded { preimage };
         let state = serde_json::to_string(&state)?;
         self.rpc
             .datastore(&DatastoreRequest {
@@ -199,7 +231,10 @@ impl Datastore for ClnDatastore {
         let info = serde_json::to_string(&info)?;
         self.rpc
             .datastore(&DatastoreRequest {
-                key: attempt_key(trampoline.invoice.payment_hash(), attempt_id),
+                key: attempt_key(
+                    trampoline.invoice.payment_hash(),
+                    attempt_id.attempt_id.clone(),
+                ),
                 string: Some(info),
                 hex: None,
                 mode: Some(DatastoreMode::MUST_REPLACE),

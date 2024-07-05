@@ -383,6 +383,10 @@ async fn payment_lifecycle<B, P, S>(
             attempt_id,
             attempt_time_seconds,
         } => {
+            debug!(
+                attempt_id.attempt_id,
+                attempt_time_seconds, "Payment is pending, awaiting payment."
+            );
             match params
                 .payment_provider
                 .wait_payment(*trampoline.invoice.payment_hash())
@@ -390,6 +394,7 @@ async fn payment_lifecycle<B, P, S>(
             {
                 Ok(maybe_preimage) => {
                     if let Some(preimage) = maybe_preimage {
+                        trace!("pending payment resolved with preimage");
                         resolve(
                             &payments,
                             &trampoline,
@@ -398,7 +403,7 @@ async fn payment_lifecycle<B, P, S>(
                         .await;
                         match params
                             .store
-                            .mark_succeeded(&trampoline, attempt_id, preimage)
+                            .mark_succeeded(&trampoline, &attempt_id, preimage)
                             .await
                         {
                             Ok(_) => {}
@@ -409,6 +414,20 @@ async fn payment_lifecycle<B, P, S>(
                         return;
                     }
 
+                    trace!("pending payment resolved without preimage");
+                    match params.store.mark_failed(&trampoline, &attempt_id).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("Failed to mark payment as failed: {:?}", e);
+                            resolve(
+                                &payments,
+                                &trampoline,
+                                HtlcAcceptedResponse::temporary_node_failure(),
+                            )
+                            .await;
+                            return;
+                        }
+                    }
                     // Get the time left since this attempt was started. Note
                     // that this is not really the mpp timeout time remaining,
                     // but it's the mpp timeout minus the start of the payment
@@ -435,6 +454,7 @@ async fn payment_lifecycle<B, P, S>(
             }
         }
         crate::store::PaymentState::Succeeded { preimage } => {
+            debug!("existing payment already had preimage");
             resolve(
                 &payments,
                 &trampoline,
@@ -444,6 +464,17 @@ async fn payment_lifecycle<B, P, S>(
             return;
         }
     };
+
+    if time_left.is_zero() {
+        debug!("MPP timeout has expired.");
+        resolve(
+            &payments,
+            &trampoline,
+            HtlcAcceptedResponse::temporary_trampoline_failure(trampoline.routing_policy.clone()),
+        )
+        .await;
+        return;
+    }
 
     tokio::select! {
         _ = tokio::time::sleep(time_left) => {
@@ -547,7 +578,7 @@ async fn payment_lifecycle<B, P, S>(
             .await;
             if let Err(e) = params
                 .store
-                .mark_succeeded(&trampoline, attempt_id.attempt_id, preimage)
+                .mark_succeeded(&trampoline, &attempt_id, preimage)
                 .await
             {
                 error!("Failed to mark payment as succeeded: {:?}", e);
@@ -696,7 +727,7 @@ enum HtlcCheckResult {
 mod tests {
     use std::{
         sync::Arc,
-        time::{Duration, SystemTime},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use anyhow::anyhow;
@@ -717,7 +748,7 @@ mod tests {
             TrampolineRoutingPolicy,
         },
         payment_provider::{MockPaymentProvider, PaymentRequest},
-        store::{AttemptId, MockDatastore},
+        store::{self, AttemptId, MockDatastore},
         tlv::{SerializedTlvStream, TlvEntry},
     };
 
@@ -906,7 +937,8 @@ mod tests {
         let pay_result = Ok(test.preimage.to_vec());
         test.payment_provider
             .expect_pay()
-            .return_once(|_| pay_result);
+            .return_once(|_| pay_result)
+            .once();
         let preimage = test.preimage.to_vec();
         let request = test.request();
         let manager = test.htlc_manager();
@@ -939,7 +971,8 @@ mod tests {
         test.payment_provider
             .expect_pay()
             .with(eq(expected_req))
-            .return_once(|_| pay_result);
+            .return_once(|_| pay_result)
+            .once();
         let preimage = test.preimage.to_vec();
         let request = test.request();
         let manager = test.htlc_manager();
@@ -960,7 +993,8 @@ mod tests {
         let pay_result = Err(anyhow!("payment failed"));
         test.payment_provider
             .expect_pay()
-            .return_once(|_| pay_result);
+            .return_once(|_| pay_result)
+            .once();
         let request = test.request();
         let failure = test.temporary_trampoline_failure();
         let manager = test.htlc_manager();
@@ -982,6 +1016,7 @@ mod tests {
         let request = test.request();
         let mpp_timeout = test.mpp_timeout;
         let failure = test.temporary_trampoline_failure();
+        test.payment_provider.expect_pay().never();
         let manager = test.htlc_manager();
 
         let start = tokio::time::Instant::now();
@@ -1011,7 +1046,8 @@ mod tests {
         test1
             .payment_provider
             .expect_pay()
-            .return_once(|_| pay_result);
+            .return_once(|_| pay_result)
+            .once();
         let manager = test1.htlc_manager();
 
         let (result1, result2) = join!(
@@ -1043,7 +1079,8 @@ mod tests {
         test1
             .payment_provider
             .expect_pay()
-            .return_once(|_| pay_result);
+            .return_once(|_| pay_result)
+            .once();
         let manager = test1.htlc_manager();
 
         let (result1, result2) = join!(
@@ -1073,6 +1110,7 @@ mod tests {
         let request2 = test2.request();
         let mpp_timeout = test1.mpp_timeout;
         let failure = test1.temporary_trampoline_failure();
+        test1.payment_provider.expect_pay().never();
         let manager = test1.htlc_manager();
 
         let start = tokio::time::Instant::now();
@@ -1089,6 +1127,140 @@ mod tests {
         );
         assert!(
             matches!(result2, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_replay_payment_in_flight_success() {
+        let mut test = TestData::default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 1;
+        let preimage = test.preimage.to_vec();
+        test.store = MockDatastore::new();
+        test.store
+            .expect_fetch_payment_info()
+            .return_once(move |_| {
+                Ok(store::PaymentState::Pending {
+                    attempt_id: AttemptId::default(),
+                    attempt_time_seconds: now,
+                })
+            })
+            .once();
+        test.store.expect_mark_succeeded().once();
+        test.payment_provider
+            .expect_wait_payment()
+            .return_once(|_| Ok(Some(preimage)))
+            .once();
+        test.payment_provider.expect_pay().never();
+        let preimage = test.preimage.to_vec();
+        let request = test.request();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_replay_payment_in_flight_failure() {
+        let mut test = TestData::default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - test.mpp_timeout.as_secs()
+            - 1;
+        test.store = MockDatastore::new();
+        test.store
+            .expect_fetch_payment_info()
+            .return_once(move |_| {
+                Ok(store::PaymentState::Pending {
+                    attempt_id: AttemptId::default(),
+                    attempt_time_seconds: now,
+                })
+            })
+            .once();
+        test.store
+            .expect_mark_failed()
+            .return_once(|_, _| Ok(()))
+            .once();
+        test.payment_provider
+            .expect_wait_payment()
+            .return_once(|_| Ok(None))
+            .once();
+        test.payment_provider.expect_pay().never();
+        let request = test.request();
+        let failure = test.temporary_trampoline_failure();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_replay_payment_in_flight_failure_then_success() {
+        let mut test = TestData::default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 1;
+        let preimage = test.preimage.to_vec();
+        test.store = MockDatastore::new();
+        test.store
+            .expect_fetch_payment_info()
+            .return_once(move |_| {
+                Ok(store::PaymentState::Pending {
+                    attempt_id: AttemptId::default(),
+                    attempt_time_seconds: now,
+                })
+            })
+            .once();
+        test.store
+            .expect_mark_failed()
+            .return_once(|_, _| Ok(()))
+            .once();
+        test.store
+            .expect_add_payment_attempt()
+            .return_once(|_| Ok(AttemptId::default()))
+            .once();
+        test.store
+            .expect_mark_succeeded()
+            .return_once(|_, _, _| Ok(()))
+            .once();
+        test.payment_provider
+            .expect_wait_payment()
+            .return_once(|_| Ok(None))
+            .once();
+        test.payment_provider
+            .expect_pay()
+            .return_once(|_| Ok(preimage))
+            .once();
+        let request = test.request();
+        let preimage = test.preimage.to_vec();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Resolve { payment_key } if payment_key.eq(&preimage))
         );
         let payments = manager.payments.lock().await;
         assert_eq!(0, payments.len());
