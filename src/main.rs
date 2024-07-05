@@ -68,7 +68,7 @@ const OPTION_NO_SELF_ROUTE_HINTS: FlagConfigOption = ConfigOption::new_flag(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let builder = plugin::init::<PayPaymentProvider>()
+    let builder = plugin::init::<PayPaymentProvider<Rpc>>()
         .option(OPTION_CLTV_DELTA)
         .option(OPTION_POLICY_CLTV_DELTA)
         .option(OPTION_POLICY_FEE_BASE)

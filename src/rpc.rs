@@ -62,6 +62,7 @@ impl From<cln_rpc::RpcError> for RpcError {
 impl std::error::Error for RpcError {}
 
 /// `ClnRpc` implementation using the `cln_rpc` crate.
+#[derive(Clone)]
 pub struct Rpc {
     /// Socket file to connect to core lightning.
     rpc_file: String,
