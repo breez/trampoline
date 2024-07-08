@@ -49,6 +49,13 @@ jobs:
   itest:
     name: Integration tests
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cln-version: [
+          v24.05,
+          v24.02.2,
+          v23.11.2,
+        ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,12 +76,15 @@ jobs:
           rm -rf "bitcoin-26.1-x86_64-linux-gnu.tar.gz" "bitcoin-26.1"
       
       - name: Install lightningd
+        env:
+          CLN_VERSION: ${{ matrix.cln-version }}
+          CLN_FILENAME: clightning-${{ matrix.cln-version }}-Ubuntu-22.04.tar.xz
         run: |
-          wget -q "https://github.com/ElementsProject/lightning/releases/download/v24.05/clightning-v24.05-Ubuntu-22.04.tar.xz"
+          wget -q "https://github.com/ElementsProject/lightning/releases/download/$CLN_VERSION/$CLN_FILENAME"
           mkdir cln
-          tar -xf "clightning-v24.05-Ubuntu-22.04.tar.xz" -C cln
+          tar -xf "$CLN_FILENAME" -C cln
           sudo cp -r "cln/usr" "/"
-          rm -rf "clightning-v24.05-Ubuntu-22.04.tar.xz" "cln"
+          rm -rf "$CLN_FILENAME" "cln"
 
       - name: Install virtualenv
         run: python -m pip install --user virtualenv
