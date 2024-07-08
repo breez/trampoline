@@ -6,10 +6,11 @@ defined in [Trampoline Routing](https://github.com/lightning/bolts/pull/829) and
 custom protocol.
 
 ## Installation
-In order to install `trampoline` you have to compile from source.
+In order to install `trampoline` you have to compile from source. 
 
 ### Prerequisites
 - [Rust](https://www.rust-lang.org/tools/install) installation
+- Core lightning >= **v23.11**.
 
 ### Compilation
 Run `make release` in the root folder of this repository. The binary will be
@@ -43,7 +44,7 @@ to core lightning on startup.
 ```
 
 ## Testing
-To run all tests call `make test`, or `make test -j2`
+To run all tests call `make test`, or `PYTEST_PAR=6 make test -j3`.
 
 ### Unit tests
 To run only the unit tests call `make utest`.
@@ -60,9 +61,9 @@ In order to run the integration tests you need
 #### Running integration tests
 Call `make itest` to only run the integration tests. To run a single test, use
 `PYTEST_OPTS="-k name_of_test" make itest`. To run tests in parallel, use
-`PYTEST_PAR=10 make itest`.
+`PYTEST_PAR=6 make itest`.
 
 ## Contributing
 Contributions are welcome!
-Make sure to run `make check` before committing, or `make check -j4` if you like
-to be fast.
+Make sure to run `make check` before committing, or 
+`PYTEST_PAR=6 make check -j6` if you like to be fast.
