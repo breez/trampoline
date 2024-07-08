@@ -23,3 +23,4 @@ def test_inflight_restart(node_factory):
 
     recipient.rpc.call("resolve", {})
     result = sender.rpc.waitsendpay(invoice["payment_hash"])
+    assert result['status'] == 'complete'

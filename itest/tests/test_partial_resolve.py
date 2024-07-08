@@ -63,3 +63,4 @@ def test_partial_resolve(node_factory):
 
     # Should settle
     result = sender.rpc.waitsendpay(invoice["payment_hash"])
+    assert result['status'] == 'complete'
