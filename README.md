@@ -44,7 +44,7 @@ to core lightning on startup.
 ```
 
 ## Testing
-To run all tests call `make test`, or `PYTEST_PAR=6 make test -j3`.
+To run all tests call `make test`, or `PYTEST_PAR=7 make test -j3`.
 
 ### Unit tests
 To run only the unit tests call `make utest`.
@@ -61,9 +61,9 @@ In order to run the integration tests you need
 #### Running integration tests
 Call `make itest` to only run the integration tests. To run a single test, use
 `PYTEST_OPTS="-k name_of_test" make itest`. To run tests in parallel, use
-`PYTEST_PAR=6 make itest`.
+`PYTEST_PAR=7 make itest`.
 
 ## Contributing
 Contributions are welcome!
 Make sure to run `make check` before committing, or 
-`PYTEST_PAR=6 make check -j6` if you like to be fast.
+`PYTEST_PAR=7 make check -j6` if you like to be fast.
