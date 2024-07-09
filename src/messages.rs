@@ -63,9 +63,15 @@ impl HtlcAcceptedResponse {
         }
     }
 
-    pub fn temporary_trampoline_failure(policy: TrampolineRoutingPolicy) -> Self {
+    pub fn temporary_trampoline_failure() -> Self {
         HtlcAcceptedResponse::Fail {
-            failure_message: HtlcFailReason::TemporaryTrampolineFailure(policy).encode(),
+            failure_message: HtlcFailReason::TemporaryTrampolineFailure.encode(),
+        }
+    }
+
+    pub fn trampoline_fee_or_expiry_insufficient(policy: TrampolineRoutingPolicy) -> Self {
+        HtlcAcceptedResponse::Fail {
+            failure_message: HtlcFailReason::TrampolineFeeOrExpiryInsufficient(policy).encode(),
         }
     }
 }
@@ -101,7 +107,8 @@ where
 
 pub enum HtlcFailReason {
     TemporaryNodeFailure,
-    TemporaryTrampolineFailure(TrampolineRoutingPolicy),
+    TemporaryTrampolineFailure,
+    TrampolineFeeOrExpiryInsufficient(TrampolineRoutingPolicy),
 }
 
 impl HtlcFailReason {
@@ -110,7 +117,10 @@ impl HtlcFailReason {
             HtlcFailReason::TemporaryNodeFailure => {
                 vec![0x20, 2]
             }
-            HtlcFailReason::TemporaryTrampolineFailure(policy) => {
+            HtlcFailReason::TemporaryTrampolineFailure => {
+                vec![0x20, 25]
+            }
+            HtlcFailReason::TrampolineFeeOrExpiryInsufficient(policy) => {
                 let mut s = vec![0x20, 26];
                 s.extend_from_slice(&policy.fee_base_msat.to_be_bytes());
                 s.extend_from_slice(&policy.fee_proportional_millionths.to_be_bytes());
@@ -223,7 +233,14 @@ mod encode_failure_tests {
 
     #[test]
     fn encode_temporary_trampoline_failure() {
-        let failure = HtlcFailReason::TemporaryTrampolineFailure(TrampolineRoutingPolicy {
+        let failure = HtlcFailReason::TemporaryTrampolineFailure;
+        let encoded = failure.encode();
+        assert_eq!(vec![0x20, 25], encoded);
+    }
+
+    #[test]
+    fn encode_trampoline_fee_or_expiry_insufficient() {
+        let failure = HtlcFailReason::TrampolineFeeOrExpiryInsufficient(TrampolineRoutingPolicy {
             fee_base_msat: 1,
             fee_proportional_millionths: 2,
             cltv_expiry_delta: 3,

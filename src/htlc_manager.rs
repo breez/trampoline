@@ -122,7 +122,7 @@ where
             if trampoline != payment_state.trampoline {
                 trace!("Trampoline info doesn't match existing trampoline info for payment.");
                 payment_state
-                    .fail(self.temporary_trampoline_failure())
+                    .fail(HtlcAcceptedResponse::temporary_trampoline_failure())
                     .await;
             }
 
@@ -134,7 +134,7 @@ where
                     "Relative cltv expiry too low."
                 );
                 payment_state
-                    .fail(self.temporary_trampoline_failure())
+                    .fail(self.trampoline_fee_or_expiry_insufficient())
                     .await;
             }
 
@@ -158,7 +158,7 @@ where
                     "Payment offers too low fee for trampoline."
                 );
                 payment_state
-                    .fail(self.temporary_trampoline_failure())
+                    .fail(self.trampoline_fee_or_expiry_insufficient())
                     .await;
             }
 
@@ -333,10 +333,12 @@ where
         }))
     }
 
-    /// Convenience function to return temporary trampoline failure with the
-    /// current routing policy.
-    fn temporary_trampoline_failure(&self) -> HtlcAcceptedResponse {
-        HtlcAcceptedResponse::temporary_trampoline_failure(self.params.routing_policy.clone())
+    /// Convenience function to return trampoline_fee_or_expiry_insufficient
+    /// with the current routing policy.
+    fn trampoline_fee_or_expiry_insufficient(&self) -> HtlcAcceptedResponse {
+        HtlcAcceptedResponse::trampoline_fee_or_expiry_insufficient(
+            self.params.routing_policy.clone(),
+        )
     }
 }
 
@@ -470,7 +472,7 @@ async fn payment_lifecycle<B, P, S>(
         resolve(
             &payments,
             &trampoline,
-            HtlcAcceptedResponse::temporary_trampoline_failure(trampoline.routing_policy.clone()),
+            HtlcAcceptedResponse::temporary_trampoline_failure(),
         )
         .await;
         return;
@@ -479,8 +481,7 @@ async fn payment_lifecycle<B, P, S>(
     tokio::select! {
         _ = tokio::time::sleep(time_left) => {
             debug!("Payment timed out waiting for htlcs.");
-            resolve(&payments, &trampoline, HtlcAcceptedResponse::temporary_trampoline_failure(
-                trampoline.routing_policy.clone())).await;
+            resolve(&payments, &trampoline, HtlcAcceptedResponse::temporary_trampoline_failure()).await;
             return;
         }
         failure = fail_requested.recv() => {
@@ -586,13 +587,12 @@ async fn payment_lifecycle<B, P, S>(
         }
         Err(e) => {
             debug!("Payment failed: {:?}", e);
-            // TODO: Extract relevant info from the error?
+            // TODO: Extract new trampoline policy if expiry or fee was
+            // insufficient.
             resolve(
                 &payments,
                 &trampoline,
-                HtlcAcceptedResponse::temporary_trampoline_failure(
-                    trampoline.routing_policy.clone(),
-                ),
+                HtlcAcceptedResponse::temporary_trampoline_failure(),
             )
             .await;
             if let Err(e) = params.store.mark_failed(&trampoline, &attempt_id).await {
@@ -921,7 +921,11 @@ mod tests {
         }
 
         fn temporary_trampoline_failure(&self) -> Vec<u8> {
-            HtlcFailReason::TemporaryTrampolineFailure(self.policy.clone()).encode()
+            HtlcFailReason::TemporaryTrampolineFailure.encode()
+        }
+
+        fn trampoline_fee_or_expiry_insufficient(&self) -> Vec<u8> {
+            HtlcFailReason::TrampolineFeeOrExpiryInsufficient(self.policy.clone()).encode()
         }
     }
 
@@ -1450,6 +1454,44 @@ mod tests {
         let result = manager.handle_htlc(&request).await;
 
         assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_fee_insufficient() {
+        let mut test = TestData::default();
+        test.total_amount -= 1;
+        let request = test.request();
+        test.payment_provider.expect_pay().never();
+        let failure = test.trampoline_fee_or_expiry_insufficient();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
+        );
+        let payments = manager.payments.lock().await;
+        assert_eq!(0, payments.len());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_expiry_insufficient() {
+        let mut test = TestData::default();
+        let mut request = test.request();
+        request.htlc.cltv_expiry_relative -= 1;
+        test.payment_provider.expect_pay().never();
+        let failure = test.trampoline_fee_or_expiry_insufficient();
+        let manager = test.htlc_manager();
+
+        let result = manager.handle_htlc(&request).await;
+
+        assert!(
+            matches!(result, HtlcAcceptedResponse::Fail { failure_message } if failure_message.eq(&failure))
+        );
         let payments = manager.payments.lock().await;
         assert_eq!(0, payments.len());
     }
