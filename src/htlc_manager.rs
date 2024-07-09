@@ -635,6 +635,9 @@ struct PaymentState {
     /// the process of being paid, this might be ignored.
     fail_requested: mpsc::Sender<HtlcAcceptedResponse>,
 
+    /// Value indicating whether failure is requested.
+    is_fail_requested: bool,
+
     /// The total amount currently received with htlcs with the same payment
     /// hash.
     amount_received_msat: u64,
@@ -656,6 +659,7 @@ impl PaymentState {
         Self {
             htlcs: Vec::new(),
             trampoline,
+            is_fail_requested: false,
             is_ready: false,
             payment_ready,
             fail_requested,
@@ -682,6 +686,7 @@ impl PaymentState {
         self.cltv_expiry = std::cmp::min(req.htlc.cltv_expiry, self.cltv_expiry);
         self.htlcs.push(sender);
         if !self.is_ready
+            && !self.is_fail_requested
             && self
                 .trampoline
                 .routing_policy
@@ -699,8 +704,13 @@ impl PaymentState {
 
     /// Requests failure for this payment. Does not fail back htlcs immediately,
     /// because an outgoing payment may already be in-flight.
-    async fn fail(&self, resp: HtlcAcceptedResponse) {
-        let _ = self.fail_requested.send(resp).await;
+    async fn fail(&mut self, resp: HtlcAcceptedResponse) {
+        if !self.is_fail_requested {
+            self.is_ready = false;
+            self.is_fail_requested = true;
+
+            let _ = self.fail_requested.send(resp).await;
+        }
     }
 
     /// Resolves all htlcs associated to this payment with the given resolution
