@@ -15,7 +15,7 @@ use crate::{
     },
     payment_provider::{PaymentProvider, PaymentRequest},
     store::Datastore,
-    tlv::{FromBytes, ProtoBuf, SerializedTlvStream, TlvEntry, ToBytes},
+    tlv::{FromBytes, ProtoBuf, SerializedTlvStream, ToBytes},
 };
 
 const TLV_PAYMENT_METADATA: u64 = 16;
@@ -362,33 +362,17 @@ where
 /// plugin.
 fn default_response(req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
     if let Some(payment_metadata) = req.onion.payload.get(TLV_PAYMENT_METADATA) {
-        if let Ok(mut payment_metadata) =
+        if let Ok(payment_metadata) =
             TryInto::<SerializedTlvStream>::try_into(payment_metadata.value)
         {
             if payment_metadata.get(TLV_TRAMPOLINE_INVOICE).is_some()
                 || payment_metadata.get(TLV_TRAMPOLINE_AMOUNT).is_some()
             {
-                payment_metadata.remove(TLV_TRAMPOLINE_AMOUNT);
-                payment_metadata.remove(TLV_TRAMPOLINE_INVOICE);
                 let mut payload = req.onion.payload.clone();
                 payload.remove(TLV_PAYMENT_METADATA);
-                match payload.insert(TlvEntry {
-                    typ: TLV_PAYMENT_METADATA,
-                    value: SerializedTlvStream::to_bytes(payment_metadata),
-                }) {
-                    Ok(_) => {
-                        return HtlcAcceptedResponse::Continue {
-                            payload: Some(SerializedTlvStream::to_bytes(payload)),
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to strip trampoline tlvs from payment metadata: {:?}",
-                            e
-                        );
-                        return HtlcAcceptedResponse::Continue { payload: None };
-                    }
-                }
+                return HtlcAcceptedResponse::Continue {
+                    payload: Some(SerializedTlvStream::to_bytes(payload)),
+                };
             }
         }
     }

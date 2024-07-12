@@ -26,23 +26,6 @@ impl SerializedTlvStream {
             self.entries.remove(position);
         }
     }
-
-    pub fn insert(&mut self, e: TlvEntry) -> Result<(), anyhow::Error> {
-        if let Some(old) = self.get(e.typ) {
-            return Err(anyhow::anyhow!(
-                "TlvStream contains entry of type={}, old={:?}, new={:?}",
-                e.typ,
-                old,
-                e
-            ));
-        }
-
-        self.entries.push(e);
-        self.entries
-            .sort_by(|a, b| a.typ.partial_cmp(&b.typ).unwrap());
-
-        Ok(())
-    }
 }
 
 pub trait FromBytes: Sized {
