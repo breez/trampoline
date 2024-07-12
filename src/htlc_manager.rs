@@ -91,6 +91,7 @@ where
             short_channel_id = %req.htlc.short_channel_id,
             htlc_id = req.htlc.id))]
     pub async fn handle_htlc(&self, req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
+        trace!("got htlc");
         let (sender, receiver) = oneshot::channel();
         let trampoline = match self.check_htlc(req) {
             HtlcCheckResult::Response(resp) => return resp,

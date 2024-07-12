@@ -9,6 +9,7 @@ use crate::{
 };
 use serde_json::Value;
 use tokio::io::{Stdin, Stdout};
+use tracing::error;
 
 const TRAMPOLINE_FEATURE_BIT: &str = "080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
@@ -58,7 +59,13 @@ async fn on_htlc_accepted<P>(
 where
     P: PaymentProvider + Clone + Send + Sync + 'static,
 {
-    let req: HtlcAcceptedRequest = serde_json::from_value(v)?;
+    let req: HtlcAcceptedRequest = match serde_json::from_value(v) {
+        Ok(req) => req,
+        Err(e) => {
+            error!("failed to deserialize htlc accepted request: {:?}", e);
+            return Err(e.into());
+        }
+    };
     let resp = plugin.state().htlc_manager.handle_htlc(&req).await;
     Ok(serde_json::to_value(resp)?)
 }
@@ -68,7 +75,13 @@ async fn on_block_added<P>(plugin: Plugin<PluginState<P>>, v: Value) -> Result<(
 where
     P: PaymentProvider + Clone + Send + Sync + 'static,
 {
-    let block_added: BlockAddedNotification = serde_json::from_value(v)?;
+    let block_added: BlockAddedNotification = match serde_json::from_value(v) {
+        Ok(req) => req,
+        Err(e) => {
+            error!("failed to deserialize block added request: {:?}", e);
+            return Err(e.into());
+        }
+    };
     plugin
         .state()
         .block_watcher
