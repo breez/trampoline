@@ -328,7 +328,9 @@ where
                         invoice_amount_msat
                     } else {
                         return Err(anyhow!(
-                            "non-matching amounts in invoice tlv and amount tlv"
+                            "non-matching amounts in invoice tlv {} and amount tlv {}",
+                            invoice_amount_msat,
+                            tlv_amount_msat
                         ));
                     }
                 }
