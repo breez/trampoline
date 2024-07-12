@@ -9,7 +9,7 @@ def test_inflight_restart(node_factory):
     )
     invoice = recipient.rpc.invoice(1_000_000, "trampoline", "trampoline")
 
-    helpers.send_onion(sender, trampoline, invoice, 1_005_000, 1_005_000)
+    helpers.send_onion(sender, trampoline, invoice, 1_005_000, 1_005_000, 1_000_000)
     wait_for(lambda: len(recipient.rpc.listpeerchannels()["channels"][0]["htlcs"]) > 0)
     trampoline.restart()
     trampoline.connect(recipient)

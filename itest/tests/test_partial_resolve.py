@@ -30,7 +30,9 @@ def test_partial_resolve(node_factory):
     invoice = recipient.rpc.invoice(
         1_000_000_000, "trampoline", "trampoline", preimage=preimage
     )
-    helpers.send_onion(sender, trampoline, invoice, 1_005_000_000, 1_005_000_000)
+    helpers.send_onion(
+        sender, trampoline, invoice, 1_005_000_000, 1_005_000_000, 1_000_000_000
+    )
 
     # Wait for all parts to arrive at the recipient
     wait_for(

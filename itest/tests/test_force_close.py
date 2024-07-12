@@ -8,7 +8,9 @@ def test_force_close(node_factory):
         node_factory, hodl_plugin=True, may_reconnect=False
     )
     invoice = recipient.rpc.invoice(500_000_000, "trampoline", "trampoline")
-    helpers.send_onion(sender, trampoline, invoice, 502_500_000, 502_500_000)
+    helpers.send_onion(
+        sender, trampoline, invoice, 502_500_000, 502_500_000, 500_000_000
+    )
     wait_for(lambda: len(recipient.rpc.listpeerchannels()["channels"][0]["htlcs"]) > 0)
 
     # force close from sender

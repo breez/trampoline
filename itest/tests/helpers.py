@@ -61,6 +61,7 @@ def send_onion(
     invoice,
     amount_msat,
     total_msat,
+    invoice_amount_msat,
     delay=1008,
     partid=0,
     groupid=0,
@@ -72,44 +73,37 @@ def send_onion(
             ret = ret[1:]
         return ret
 
+    scid = sender.rpc.listpeerchannels(peer_id=trampoline.info["id"])["channels"][0][
+        "short_channel_id"
+    ]
     blockheight = sender.rpc.getinfo()["blockheight"]
-    payload = TlvPayload()
-
-    # amt_to_forward
-    b = BytesIO()
-    b.write(truncate_encode(amount_msat))
-    payload.add_field(2, b.getvalue())
-
-    # outgoing_cltv_value
-    b = BytesIO()
-    b.write(truncate_encode(blockheight + delay))
-    payload.add_field(4, b.getvalue())
-
-    # payment_data
-    b = BytesIO()
-    b.write(bytes.fromhex(invoice["payment_secret"]))
-    b.write(truncate_encode(total_msat))
-    payload.add_field(8, b.getvalue())
+    payment_metadata = TlvPayload()
 
     # trampoline_invoice
     b = BytesIO()
     b.write(invoice["bolt11"].encode())
-    payload.add_field(33001, b.getvalue())
+    payment_metadata.add_field(33001, b.getvalue())
 
-    hops = [{"pubkey": trampoline.info["id"], "payload": payload.to_bytes().hex()}]
-    first_hop = {
-        "id": trampoline.info["id"],
-        "amount_msat": amount_msat,
-        "delay": delay,
-    }
-    onion = sender.rpc.createonion(hops=hops, assocdata=invoice["payment_hash"])
+    # trampoline_amount
+    b = BytesIO()
+    b.write(truncate_encode(invoice_amount_msat))
+    payment_metadata.add_field(33003, b.getvalue())
+
     sender.rpc.call(
-        "sendonion",
+        "sendpay",
         {
-            "onion": onion["onion"],
-            "first_hop": first_hop,
+            "route": [
+                {
+                    "amount_msat": amount_msat,
+                    "id": trampoline.info["id"],
+                    "delay": delay,
+                    "channel": scid,
+                }
+            ],
             "payment_hash": invoice["payment_hash"],
+            "amount_msat": total_msat,
             "partid": partid,
             "groupid": groupid,
+            "payment_metadata": payment_metadata.to_bytes(False).hex(),
         },
     )

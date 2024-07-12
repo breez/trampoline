@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use anyhow::{anyhow, Context, Result};
 use secp256k1::hashes::sha256::Hash;
-use tracing::{debug, error, field, instrument, trace};
+use tracing::{debug, error, field, instrument, trace, warn};
 
 use crate::{
     block_watcher::BlockProvider,
@@ -15,7 +15,12 @@ use crate::{
     },
     payment_provider::{PaymentProvider, PaymentRequest},
     store::Datastore,
+    tlv::{FromBytes, ProtoBuf, SerializedTlvStream, TlvEntry, ToBytes},
 };
+
+const TLV_PAYMENT_METADATA: u64 = 16;
+const TLV_TRAMPOLINE_INVOICE: u64 = 33001;
+const TLV_TRAMPOLINE_AMOUNT: u64 = 33003;
 
 /// HtlcManager is the main handler for htlcs. It aggregates htlcs into payments
 /// based on the payment hash.
@@ -190,7 +195,7 @@ where
         // destination, continue.
         if req.onion.short_channel_id.is_some() {
             trace!("This is a forward, returning continue.");
-            return HtlcCheckResult::Response(default_response());
+            return HtlcCheckResult::Response(default_response(req));
         }
 
         // Check whether this is a trampoline payment by extracting the invoice.
@@ -199,22 +204,14 @@ where
                 Some(trampoline) => trampoline,
                 None => {
                     trace!("This is a not a trampoline htlc, returning continue.");
-                    return HtlcCheckResult::Response(default_response());
+                    return HtlcCheckResult::Response(default_response(req));
                 }
             },
             Err(e) => {
                 debug!("Failed to extract trampoline info from htlc: {:?}", e);
-                return HtlcCheckResult::Response(default_response());
+                return HtlcCheckResult::Response(default_response(req));
             }
         };
-
-        // If we are the destination, let the invoice subsystem handle this
-        // htlc.
-        // TODO: Double check whether this makes sense.
-        if trampoline.payee.eq(&self.params.local_pubkey) {
-            trace!("We are the payee, invoice subsystem handles this htlc.");
-            return HtlcCheckResult::Response(default_response());
-        }
 
         // Check whether we are the last hop in the route hint. We can't rewrite
         // this as a forward, so we'll error if that's the case.
@@ -252,9 +249,29 @@ where
 
     /// Extracts the trampoline information from the request onion payload.
     fn extract_trampoline_info(&self, req: &HtlcAcceptedRequest) -> Result<Option<TrampolineInfo>> {
-        let invoice_blob = match req.onion.payload.get(33001) {
+        let payment_metadata: SerializedTlvStream =
+            match req.onion.payload.get(TLV_PAYMENT_METADATA) {
+                Some(payment_metadata) => {
+                    match SerializedTlvStream::from_bytes(payment_metadata.value) {
+                        Ok(payment_metadata) => payment_metadata,
+                        Err(e) => {
+                            warn!("htlc had invalid payment metadata: {:?}", e);
+                            return Ok(None);
+                        }
+                    }
+                }
+                None => {
+                    trace!("htlc does not have payment metadata.");
+                    return Ok(None);
+                }
+            };
+
+        let invoice_blob = match payment_metadata.get(TLV_TRAMPOLINE_INVOICE) {
             Some(invoice_blob) => invoice_blob.value,
-            None => return Ok(None),
+            None => {
+                trace!("payment metadata does not contain invoice.");
+                return Ok(None);
+            }
         };
 
         let invoice_str = match from_utf8(&invoice_blob) {
@@ -289,17 +306,15 @@ where
         let payee = invoice.get_payee_pub_key();
 
         // Extract optional amount from the TLV
-        let tlv_amount_msat = match req.onion.payload.get(33003) {
+        let tlv_amount_msat = match payment_metadata.get(TLV_TRAMPOLINE_AMOUNT) {
             Some(amount_blob) => {
-                if amount_blob.value.len() != 8 {
-                    debug!(
-                        "Got invalid amount of len {} in htlc TLV",
-                        amount_blob.value.len()
-                    );
-                    None
-                } else {
-                    // An 8 byte vector should always be convertable into [u8;8]
-                    Some(u64::from_be_bytes(amount_blob.value.try_into().unwrap()))
+                let mut b: bytes::Bytes = amount_blob.value.into();
+                match b.get_tu64() {
+                    Ok(amount_msat) => Some(amount_msat),
+                    Err(e) => {
+                        debug!("Got invalid amount of len {} in htlc TLV: {:?}", b.len(), e);
+                        None
+                    }
                 }
             }
             None => None,
@@ -345,7 +360,38 @@ where
 
 /// The default response is continue, meaning the htlc is not modified by this
 /// plugin.
-fn default_response() -> HtlcAcceptedResponse {
+fn default_response(req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
+    if let Some(payment_metadata) = req.onion.payload.get(TLV_PAYMENT_METADATA) {
+        if let Ok(mut payment_metadata) =
+            TryInto::<SerializedTlvStream>::try_into(payment_metadata.value)
+        {
+            if payment_metadata.get(TLV_TRAMPOLINE_INVOICE).is_some()
+                || payment_metadata.get(TLV_TRAMPOLINE_AMOUNT).is_some()
+            {
+                payment_metadata.remove(TLV_TRAMPOLINE_AMOUNT);
+                payment_metadata.remove(TLV_TRAMPOLINE_INVOICE);
+                let mut payload = req.onion.payload.clone();
+                payload.remove(TLV_PAYMENT_METADATA);
+                match payload.insert(TlvEntry {
+                    typ: TLV_PAYMENT_METADATA,
+                    value: SerializedTlvStream::to_bytes(payment_metadata),
+                }) {
+                    Ok(_) => {
+                        return HtlcAcceptedResponse::Continue {
+                            payload: Some(SerializedTlvStream::to_bytes(payload)),
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to strip trampoline tlvs from payment metadata: {:?}",
+                            e
+                        );
+                        return HtlcAcceptedResponse::Continue { payload: None };
+                    }
+                }
+            }
+        }
+    }
     HtlcAcceptedResponse::Continue { payload: None }
 }
 
@@ -762,7 +808,7 @@ mod tests {
         },
         payment_provider::{MockPaymentProvider, PaymentRequest},
         store::{self, AttemptId, MockDatastore},
-        tlv::{SerializedTlvStream, TlvEntry},
+        tlv::{SerializedTlvStream, TlvEntry, ToBytes},
     };
 
     use super::HtlcManagerParams;
@@ -906,11 +952,10 @@ mod tests {
                 onion: Onion {
                     forward_msat: self.sender_amount,
                     outgoing_cltv_value: 0,
-                    payload: vec![TlvEntry {
+                    payload: construct_payload(vec![TlvEntry {
                         typ: 33001,
                         value: self.invoice_bytes(),
-                    }]
-                    .into(),
+                    }]),
                     short_channel_id: None,
                     total_msat: Some(self.total_amount),
                 },
@@ -946,6 +991,14 @@ mod tests {
 
     fn preimage2() -> [u8; 32] {
         [1; 32]
+    }
+
+    fn construct_payload(metadata_tlvs: Vec<TlvEntry>) -> SerializedTlvStream {
+        vec![TlvEntry {
+            typ: 16,
+            value: SerializedTlvStream::to_bytes(SerializedTlvStream::from(metadata_tlvs)),
+        }]
+        .into()
     }
 
     #[tokio::test]
@@ -1316,22 +1369,6 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_local_destination() {
-        let mut test = TestData::default();
-        test.local_pubkey =
-            PublicKey::from_secret_key(&Secp256k1::new(), &test.destination_privkey);
-        let request = test.request();
-        let manager = test.htlc_manager();
-
-        let result = manager.handle_htlc(&request).await;
-
-        assert!(matches!(result, HtlcAcceptedResponse::Continue { payload } if payload.eq(&None)));
-        let payments = manager.payments.lock().await;
-        assert_eq!(0, payments.len());
-    }
-
-    #[tokio::test]
-    #[traced_test]
     async fn test_self_route_hint_allowed() {
         let mut test = TestData::default();
         test.allow_self_route_hints = true;
@@ -1417,7 +1454,7 @@ mod tests {
         let mut test = TestData::default();
         test.invoice_amount = None;
         let mut request = test.request();
-        request.onion.payload = vec![
+        request.onion.payload = construct_payload(vec![
             TlvEntry {
                 typ: 33001,
                 value: test.invoice_bytes(),
@@ -1426,8 +1463,7 @@ mod tests {
                 typ: 33003,
                 value: 1_000_000u64.to_be_bytes().to_vec(),
             },
-        ]
-        .into();
+        ]);
         let preimage = test.preimage.to_vec();
         let pay_req = PaymentRequest {
             amount_msat: Some(1_000_000),
