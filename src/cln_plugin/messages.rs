@@ -115,7 +115,7 @@ pub(crate) enum JsonRpc<N, R> {
 ///   1) If we have an `id` then it is a request
 ///
 ///   2) Otherwise it's a notification that doesn't require a
-///   response.
+///      response.
 ///
 /// Furthermore we distinguish between the built-in types and the
 /// custom user notifications/methods:
@@ -123,7 +123,7 @@ pub(crate) enum JsonRpc<N, R> {
 ///   1) We either match a built-in type above,
 ///
 ///   2) Or it's a custom one, so we pass it around just as a
-///   `serde_json::Value`
+///      `serde_json::Value`
 impl<'de, N, R> Deserialize<'de> for JsonRpc<N, R>
 where
     N: Deserialize<'de> + Debug,
