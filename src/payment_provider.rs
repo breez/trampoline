@@ -78,7 +78,7 @@ where
                 maxfeepercent: None,
                 retry_for: Some(30),
                 maxdelay: Some(req.max_cltv_delta),
-                exemptfee: None,
+                exemptfee: Some(Amount::from_msat(0)),
                 localinvreqid: None,
                 exclude: None,
                 maxfee: Some(Amount::from_msat(req.max_fee_msat)),

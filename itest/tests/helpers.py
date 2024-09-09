@@ -25,6 +25,30 @@ def connect_nodes(sender, trampoline, recipient):
     )
 
 
+def connect_nodes_with_router(sender, trampoline, router, recipient):
+    sender.openchannel(trampoline, 1000000)
+    trampoline.openchannel(router, 1000000)
+    router.openchannel(recipient, 1000000)
+    wait_for(
+        lambda: all(
+            channel["state"] == "CHANNELD_NORMAL"
+            for channel in sender.rpc.listpeerchannels()["channels"]
+        )
+    )
+    wait_for(
+        lambda: all(
+            channel["state"] == "CHANNELD_NORMAL"
+            for channel in trampoline.rpc.listpeerchannels()["channels"]
+        )
+    )
+    wait_for(
+        lambda: all(
+            channel["state"] == "CHANNELD_NORMAL"
+            for channel in router.rpc.listpeerchannels()["channels"]
+        )
+    )
+
+
 def setup(
     node_factory, hodl_plugin=False, may_reconnect=False, connect_nodes=connect_nodes
 ):
@@ -53,6 +77,43 @@ def setup(
 
     connect_nodes(sender, trampoline, recipient)
     return sender, trampoline, recipient
+
+
+def setup_with_router(
+    node_factory,
+    hodl_plugin=False,
+    may_reconnect=False,
+    connect_nodes=connect_nodes_with_router,
+):
+    sender_opts = {}
+    recipient_opts = {}
+    router_opts = {}
+    trampoline_opts = {"plugin": plugin_path, "trampoline-mpp-timeout": "15"}
+    if hodl_plugin:
+        recipient_opts["plugin"] = hodl_plugin_path
+
+    if may_reconnect:
+        recipient_opts["may_reconnect"] = True
+        sender_opts["may_reconnect"] = True
+        router_opts["may_reconnect"] = True
+
+    sender, router, recipient = node_factory.get_nodes(
+        3, [sender_opts, router_opts, recipient_opts]
+    )
+    trampoline = node_factory.get_node(
+        options=trampoline_opts, start=False, may_reconnect=may_reconnect
+    )
+    trampoline.daemon.env["CLN_PLUGIN_LOG"] = (
+        "cln_plugin=trace,cln_rpc=trace,cln_grpc=trace,trampoline=trace,debug"
+    )
+    try:
+        trampoline.start(True)
+    except Exception:
+        trampoline.daemon.stop()
+        raise
+
+    connect_nodes(sender, trampoline, router, recipient)
+    return sender, trampoline, router, recipient
 
 
 def send_onion(
