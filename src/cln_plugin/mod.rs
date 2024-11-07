@@ -814,12 +814,9 @@ where
 
                         // Send to notification to the wildcard
                         // subscription "*" it it exists
-                        match &self.wildcard_subscription {
-                            Some(cb) => {
-                                let call = cb(plugin.clone(), params.clone());
-                                tokio::spawn(async move { call.await.unwrap() });
-                            }
-                            None => {}
+                        if let Some(cb) = &self.wildcard_subscription {
+                            let call = cb(plugin.clone(), params.clone());
+                            tokio::spawn(async move { call.await.unwrap() });
                         };
 
                         // Find the appropriate callback and process it
