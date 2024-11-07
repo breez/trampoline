@@ -80,13 +80,19 @@ pub trait ProtoBuf: Buf {
     }
 
     fn get_tu64(&mut self) -> Result<TU64, anyhow::Error> {
-        Ok(match self.remaining() {
-            1 => self.get_u8() as u64,
-            2 => self.get_u16() as u64,
-            4 => self.get_u32() as u64,
-            8 => self.get_u64(),
-            l => return Err(anyhow::anyhow!("Unexpect TU64 length: {}", l)),
-        })
+        let remaining = self.remaining();
+        if remaining == 0 {
+            return Ok(0);
+        }
+
+        if remaining > 8 {
+            return Err(anyhow::anyhow!("Unexpected TU64 length: {}", remaining));
+        }
+
+        let mut b = [0u8; 8];
+        b[(8 - remaining)..].copy_from_slice(self.chunk());
+        self.advance(self.remaining());
+        Ok(u64::from_be_bytes(b))
     }
 }
 
@@ -168,5 +174,45 @@ impl TryFrom<Vec<u8>> for SerializedTlvStream {
         let b = b.take(l as usize); // Protect against overruns
 
         Self::from_bytes(b.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProtoBuf;
+
+    #[test]
+    fn test_different_sizes() {
+        let mut b: bytes::Bytes = [0xFFu8; 1].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFF);
+
+        let mut b: bytes::Bytes = [0xFFu8; 2].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFFFF);
+
+        let mut b: bytes::Bytes = [0xFFu8; 3].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFFFFFF);
+
+        let mut b: bytes::Bytes = [0xFFu8; 4].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFFFFFFFF);
+
+        let mut b: bytes::Bytes = [0xFFu8; 5].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFFFFFFFFFF);
+
+        let mut b: bytes::Bytes = [0xFFu8; 6].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFFFFFFFFFFFF);
+
+        let mut b: bytes::Bytes = [0xFFu8; 7].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFFFFFFFFFFFFFF);
+
+        let mut b: bytes::Bytes = [0xFFu8; 8].to_vec().into();
+        let tu64 = b.get_tu64().unwrap();
+        assert_eq!(tu64, 0xFFFFFFFFFFFFFFFF);
     }
 }
