@@ -65,6 +65,11 @@ const OPTION_NO_SELF_ROUTE_HINTS: FlagConfigOption = ConfigOption::new_flag(
     important plugins acting only on forwards. The trampoline plugin will \
     'receive' and 'pay', so has different dynamics.",
 );
+const OPTION_PAYMENT_TIMEOUT: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    "trampoline-payment-timeout",
+    60,
+    "Maximum time in seconds to attempt to find a route to the destination.",
+);
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -74,7 +79,8 @@ async fn main() -> Result<(), Error> {
         .option(OPTION_POLICY_FEE_BASE)
         .option(OPTION_POLICY_FEE_PER_SATOSHI)
         .option(OPTION_MPP_TIMEOUT)
-        .option(OPTION_NO_SELF_ROUTE_HINTS);
+        .option(OPTION_NO_SELF_ROUTE_HINTS)
+        .option(OPTION_PAYMENT_TIMEOUT);
 
     let cp = match builder.configure().await? {
         Some(cp) => cp,
@@ -100,6 +106,7 @@ async fn main() -> Result<(), Error> {
     let fee_proportional_millionths = cp.option(&OPTION_POLICY_FEE_PER_SATOSHI)?.try_into()?;
     let mpp_timeout_secs = cp.option(&OPTION_MPP_TIMEOUT)?.try_into()?;
     let allow_self_route_hints: bool = !cp.option(&OPTION_NO_SELF_ROUTE_HINTS)?;
+    let payment_timeout_secs = cp.option(&OPTION_PAYMENT_TIMEOUT)?.try_into()?;
     let routing_policy = TrampolineRoutingPolicy {
         cltv_expiry_delta,
         fee_base_msat,
@@ -107,7 +114,10 @@ async fn main() -> Result<(), Error> {
     };
 
     let mpp_timeout = Duration::from_secs(mpp_timeout_secs);
-    let payment_provider = Arc::new(PayPaymentProvider::new(Arc::clone(&rpc)));
+    let payment_provider = Arc::new(PayPaymentProvider::new(
+        Arc::clone(&rpc),
+        Duration::from_secs(payment_timeout_secs),
+    ));
     let mut block_watcher = BlockWatcher::new(Arc::clone(&rpc));
     let (sender, receiver) = mpsc::channel(1);
     let block_join = block_watcher.start(receiver).await?;

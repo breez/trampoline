@@ -1,6 +1,6 @@
 use std::{
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
@@ -40,6 +40,7 @@ pub struct PayPaymentProvider<R>
 where
     R: ClnRpc,
 {
+    retry_for: u16,
     rpc: Arc<R>,
 }
 
@@ -48,8 +49,12 @@ where
     R: ClnRpc,
 {
     /// Initializes a new `PayPaymentProvider`
-    pub fn new(rpc: Arc<R>) -> Self {
-        Self { rpc }
+    pub fn new(rpc: Arc<R>, payment_timeout: Duration) -> Self {
+        let retryfor = payment_timeout.as_secs().try_into().unwrap_or(u16::MAX);
+        Self {
+            retry_for: retryfor,
+            rpc,
+        }
     }
 }
 
@@ -76,7 +81,7 @@ where
                 label: Some(label),
                 riskfactor: Some(20.0),
                 maxfeepercent: None,
-                retry_for: Some(30),
+                retry_for: Some(self.retry_for),
                 maxdelay: Some(req.max_cltv_delta),
                 exemptfee: None,
                 localinvreqid: None,
@@ -214,7 +219,7 @@ pub struct PaymentRequest {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use cln_rpc::{
         model::{
@@ -239,6 +244,10 @@ mod tests {
 
     fn payment_hash() -> sha256::Hash {
         sha256::Hash::hash(&preimage().to_vec())
+    }
+
+    fn payment_timeout() -> Duration {
+        Duration::from_secs(1)
     }
 
     fn pending_payment() -> ListsendpaysPayments {
@@ -305,7 +314,7 @@ mod tests {
             })
             .return_once(|_| Ok(ListsendpaysResponse { payments: vec![] }))
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc));
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
 
         let result = provider.wait_payment(payment_hash()).await;
         assert!(matches!(result, Ok(None)))
@@ -333,7 +342,7 @@ mod tests {
             })
             .return_once(|_| Ok(ListsendpaysResponse { payments: vec![] }))
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc));
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
 
         let result = provider.wait_payment(payment_hash()).await;
         let preimage = preimage().to_vec();
@@ -387,7 +396,7 @@ mod tests {
                 })
             })
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc));
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
 
         let result = provider.wait_payment(payment_hash()).await;
         let preimage = preimage().to_vec();
@@ -428,7 +437,7 @@ mod tests {
                 }))
             })
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc));
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
 
         let result = provider.wait_payment(payment_hash()).await;
         assert!(matches!(result, Ok(None)))
