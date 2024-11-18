@@ -15,8 +15,7 @@ pub struct HtlcAcceptedRequest {
 pub struct Onion {
     pub payload: SerializedTlvStream,
     pub short_channel_id: Option<ShortChannelId>,
-    pub forward_msat: u64,
-    pub outgoing_cltv_value: u32,
+    pub forward_msat: Option<u64>,
     pub total_msat: Option<u64>,
 }
 
@@ -295,8 +294,46 @@ mod serialize_cln_messages_tests {
                 onion: Onion {
                     payload: SerializedTlvStream::from(vec![]),
                     short_channel_id: Some("1x2x3".parse().unwrap()),
-                    forward_msat: 42,
-                    outgoing_cltv_value: 500014,
+                    forward_msat: Some(42),
+                    total_msat: None,
+                },
+            },
+            request
+        )
+    }
+
+    #[test]
+    fn deserialize_htlc_accepted_request_payload_only() {
+        let raw = r#"{
+            "onion": {
+              "payload": ""
+            },
+            "htlc": {
+              "short_channel_id": "4x5x6",
+              "id": 27,
+              "amount_msat": 43,
+              "cltv_expiry": 500028,
+              "cltv_expiry_relative": 10,
+              "payment_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "forward_to": "0000000000000000000000000000000000000000000000000000000000000000"
+          }"#;
+
+        let request: HtlcAcceptedRequest = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            HtlcAcceptedRequest {
+                htlc: Htlc {
+                    short_channel_id: "4x5x6".parse().unwrap(),
+                    id: 27,
+                    amount_msat: 43,
+                    cltv_expiry: 500028,
+                    cltv_expiry_relative: 10,
+                    payment_hash: [0; 32].to_vec()
+                },
+                onion: Onion {
+                    payload: SerializedTlvStream::from(vec![]),
+                    short_channel_id: None,
+                    forward_msat: None,
                     total_msat: None,
                 },
             },

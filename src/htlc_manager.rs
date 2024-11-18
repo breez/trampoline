@@ -102,6 +102,13 @@ where
             HtlcCheckResult::Response(resp) => return resp,
             HtlcCheckResult::Trampoline(trampoline) => *trampoline,
         };
+        let forward_msat = match req.onion.forward_msat {
+            Some(forward_msat) => forward_msat,
+            None => {
+                trace!("onion missing forward_msat, skipping");
+                return default_response(req);
+            }
+        };
 
         {
             let mut payments = self.payments.lock().await;
@@ -148,7 +155,7 @@ where
             // the current htlc.
             let total_msat = match req.onion.total_msat {
                 Some(total_msat) => total_msat,
-                None => req.onion.forward_msat,
+                None => forward_msat,
             };
 
             // Ensure enough fees are paid according to the routing policy.
@@ -936,8 +943,7 @@ mod tests {
                     short_channel_id: "0x0x0".parse().unwrap(),
                 },
                 onion: Onion {
-                    forward_msat: self.sender_amount,
-                    outgoing_cltv_value: 0,
+                    forward_msat: Some(self.sender_amount),
                     payload: construct_payload(vec![TlvEntry {
                         typ: 33001,
                         value: self.invoice_bytes(),
