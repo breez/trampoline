@@ -197,7 +197,7 @@ impl<'a> OptionType<'a> for config_type::DefaultString {
     }
 }
 
-impl<'a> OptionType<'a> for config_type::DefaultInteger {
+impl OptionType<'_> for config_type::DefaultInteger {
     type OutputValue = i64;
     type DefaultValue = i64;
 
@@ -217,7 +217,7 @@ impl<'a> OptionType<'a> for config_type::DefaultInteger {
     }
 }
 
-impl<'a> OptionType<'a> for config_type::DefaultBoolean {
+impl OptionType<'_> for config_type::DefaultBoolean {
     type OutputValue = bool;
     type DefaultValue = bool;
 
@@ -236,7 +236,7 @@ impl<'a> OptionType<'a> for config_type::DefaultBoolean {
     }
 }
 
-impl<'a> OptionType<'a> for config_type::Flag {
+impl OptionType<'_> for config_type::Flag {
     type OutputValue = bool;
     type DefaultValue = ();
 
@@ -256,7 +256,7 @@ impl<'a> OptionType<'a> for config_type::Flag {
     }
 }
 
-impl<'a> OptionType<'a> for config_type::String {
+impl OptionType<'_> for config_type::String {
     type OutputValue = Option<String>;
     type DefaultValue = ();
 
@@ -280,7 +280,7 @@ impl<'a> OptionType<'a> for config_type::String {
     }
 }
 
-impl<'a> OptionType<'a> for config_type::Integer {
+impl OptionType<'_> for config_type::Integer {
     type OutputValue = Option<i64>;
     type DefaultValue = ();
 
@@ -303,7 +303,7 @@ impl<'a> OptionType<'a> for config_type::Integer {
         ValueType::Integer
     }
 }
-impl<'a> OptionType<'a> for config_type::Boolean {
+impl OptionType<'_> for config_type::Boolean {
     type OutputValue = Option<bool>;
     type DefaultValue = ();
 
