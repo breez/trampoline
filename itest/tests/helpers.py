@@ -28,9 +28,13 @@ def connect_nodes(sender, trampoline, recipient):
 def setup(
     node_factory, hodl_plugin=False, may_reconnect=False, connect_nodes=connect_nodes
 ):
-    sender_opts = {}
-    recipient_opts = {}
-    trampoline_opts = {"plugin": plugin_path, "trampoline-mpp-timeout": "15"}
+    sender_opts = {"disable-plugin": "cln-grpc"}
+    recipient_opts = {"disable-plugin": "cln-grpc"}
+    trampoline_opts = {
+        "plugin": plugin_path,
+        "trampoline-mpp-timeout": "15",
+        "disable-plugin": "cln-grpc",
+    }
     if hodl_plugin:
         recipient_opts["plugin"] = hodl_plugin_path
 
