@@ -10,6 +10,7 @@ use tracing::{debug, error, field, instrument, trace, warn};
 
 use crate::{
     block_watcher::BlockProvider,
+    email::{NotificationService, NotifyPaymentFailedRequest},
     messages::{
         HtlcAcceptedRequest, HtlcAcceptedResponse, TrampolineInfo, TrampolineRoutingPolicy,
     },
@@ -24,20 +25,22 @@ const TLV_TRAMPOLINE_AMOUNT: u64 = 33003;
 
 /// HtlcManager is the main handler for htlcs. It aggregates htlcs into payments
 /// based on the payment hash.
-pub struct HtlcManager<B, P, S>
+pub struct HtlcManager<B, N, P, S>
 where
     B: BlockProvider,
+    N: NotificationService,
     P: PaymentProvider,
     S: Datastore,
 {
-    params: Arc<HtlcManagerParams<B, P, S>>,
+    params: Arc<HtlcManagerParams<B, N, P, S>>,
     payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
 }
 
 /// Constructor parameters for `HtlcManager`.
-pub struct HtlcManagerParams<B, P, S>
+pub struct HtlcManagerParams<B, N, P, S>
 where
     B: BlockProvider,
+    N: NotificationService,
     P: PaymentProvider,
     S: Datastore,
 {
@@ -58,6 +61,9 @@ where
     /// are failed back.
     pub mpp_timeout: Duration,
 
+    /// Service for notifying failed payments.
+    pub notification_service: Arc<N>,
+
     /// Provider for payment sending.
     pub payment_provider: Arc<P>,
 
@@ -69,14 +75,15 @@ where
 }
 
 /// Main implementation of HtlcManager.
-impl<B, P, S> HtlcManager<B, P, S>
+impl<B, N, P, S> HtlcManager<B, N, P, S>
 where
     B: BlockProvider + Send + Sync + 'static,
+    N: NotificationService + Send + Sync + 'static,
     P: PaymentProvider + Send + Sync + 'static,
     S: Datastore + Send + Sync + 'static,
 {
     /// Initializes a new HtlcManager.
-    pub fn new(params: HtlcManagerParams<B, P, S>) -> Self {
+    pub fn new(params: HtlcManagerParams<B, N, P, S>) -> Self {
         Self {
             params: Arc::new(params),
             payments: Arc::new(Mutex::new(HashMap::new())),
@@ -394,14 +401,15 @@ fn default_response(req: &HtlcAcceptedRequest) -> HtlcAcceptedResponse {
     level = "debug",
     skip_all,
     fields(payment_hash = %trampoline.invoice.payment_hash()))]
-async fn payment_lifecycle<B, P, S>(
-    params: Arc<HtlcManagerParams<B, P, S>>,
+async fn payment_lifecycle<B, N, P, S>(
+    params: Arc<HtlcManagerParams<B, N, P, S>>,
     payments: Arc<Mutex<HashMap<Hash, PaymentState>>>,
     trampoline: TrampolineInfo,
     mut payment_ready: mpsc::Receiver<()>,
     mut fail_requested: mpsc::Receiver<HtlcAcceptedResponse>,
 ) where
     B: BlockProvider,
+    N: NotificationService,
     P: PaymentProvider,
     S: Datastore,
 {
@@ -638,6 +646,16 @@ async fn payment_lifecycle<B, P, S>(
             if let Err(e) = params.store.mark_failed(&trampoline, &attempt_id).await {
                 error!("Failed to mark payment as failed: {:?}", e);
             }
+
+            params
+                .notification_service
+                .notify_payment_failed(NotifyPaymentFailedRequest {
+                    destination: trampoline.payee,
+                    error: e,
+                    payment_hash: *trampoline.invoice.payment_hash(),
+                    invoice: trampoline.bolt11,
+                })
+                .await;
         }
     }
 }
@@ -794,6 +812,7 @@ mod tests {
 
     use crate::{
         block_watcher::MockBlockProvider,
+        email::MockNotificationService,
         htlc_manager::HtlcManager,
         messages::{
             Htlc, HtlcAcceptedRequest, HtlcAcceptedResponse, HtlcFailReason, Onion,
@@ -815,6 +834,7 @@ mod tests {
         invoice_route_hint: Option<RouteHint>,
         local_pubkey: PublicKey,
         mpp_timeout: Duration,
+        notification_service: MockNotificationService,
         payment_provider: MockPaymentProvider,
         preimage: [u8; 32],
         policy: TrampolineRoutingPolicy,
@@ -865,6 +885,7 @@ mod tests {
                 invoice_route_hint: None,
                 local_pubkey,
                 mpp_timeout: Duration::from_millis(50),
+                notification_service: MockNotificationService::new(),
                 payment_provider: MockPaymentProvider::new(),
                 preimage: preimage1(),
                 policy: TrampolineRoutingPolicy {
@@ -880,13 +901,19 @@ mod tests {
 
         fn htlc_manager(
             self,
-        ) -> HtlcManager<MockBlockProvider, MockPaymentProvider, MockDatastore> {
+        ) -> HtlcManager<
+            MockBlockProvider,
+            MockNotificationService,
+            MockPaymentProvider,
+            MockDatastore,
+        > {
             HtlcManager::new(HtlcManagerParams {
                 allow_self_route_hints: self.allow_self_route_hints,
                 block_provider: Arc::new(self.block_provider),
                 cltv_delta: self.cltv_delta,
                 local_pubkey: self.local_pubkey,
                 mpp_timeout: self.mpp_timeout,
+                notification_service: Arc::new(self.notification_service),
                 payment_provider: Arc::new(self.payment_provider),
                 routing_policy: self.policy.clone(),
                 store: Arc::new(self.store),
@@ -1087,6 +1114,14 @@ mod tests {
         test.payment_provider
             .expect_pay()
             .return_once(|_| pay_result)
+            .once();
+        test.store
+            .expect_mark_failed()
+            .return_once(|_, _| Ok(()))
+            .once();
+        test.notification_service
+            .expect_notify_payment_failed()
+            .return_once(|_| ())
             .once();
         let request = test.request();
         let failure = test.temporary_trampoline_failure();

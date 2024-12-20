@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::block_watcher::BlockWatcher;
 use crate::cln_plugin::{Builder, Plugin};
+use crate::email::EmailNotificationService;
 use crate::messages::BlockAddedNotification;
 use crate::store::ClnDatastore;
 use crate::{
@@ -19,7 +20,7 @@ where
     P: PaymentProvider,
 {
     block_watcher: Arc<BlockWatcher>,
-    htlc_manager: Arc<HtlcManager<BlockWatcher, P, ClnDatastore>>,
+    htlc_manager: Arc<HtlcManager<BlockWatcher, EmailNotificationService, P, ClnDatastore>>,
 }
 
 impl<P> PluginState<P>
@@ -28,7 +29,7 @@ where
 {
     pub fn new(
         block_watcher: Arc<BlockWatcher>,
-        htlc_manager: Arc<HtlcManager<BlockWatcher, P, ClnDatastore>>,
+        htlc_manager: Arc<HtlcManager<BlockWatcher, EmailNotificationService, P, ClnDatastore>>,
     ) -> Self {
         Self {
             block_watcher,
