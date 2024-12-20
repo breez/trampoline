@@ -8,6 +8,12 @@ plugin_path = os.path.join(os.path.dirname(__file__), "../../target/debug/trampo
 hodl_plugin_path = os.path.join(os.path.dirname(__file__), "hodl_plugin.py")
 
 
+def ensure_synced(nodes):
+    for node in nodes:
+        if not node.is_synced_with_bitcoin(node.info):
+            wait_for(lambda: node.is_synced_with_bitcoin())
+
+
 def connect_nodes(sender, trampoline, recipient):
     sender.openchannel(trampoline, 1000000)
     trampoline.openchannel(recipient, 1000000)
@@ -56,6 +62,7 @@ def setup(
         raise
 
     connect_nodes(sender, trampoline, recipient)
+    ensure_synced([sender, trampoline, recipient])
     return sender, trampoline, recipient
 
 
