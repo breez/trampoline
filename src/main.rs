@@ -4,7 +4,10 @@ use anyhow::{anyhow, Error};
 use aws_sdk_sesv2::types::Destination;
 use block_watcher::BlockWatcher;
 use cln_plugin::{
-    options::{ConfigOption, DefaultIntegerConfigOption, FlagConfigOption, StringConfigOption},
+    options::{
+        ConfigOption, DefaultIntegerConfigOption, DefaultStringConfigOption, FlagConfigOption,
+        StringConfigOption,
+    },
     ConfiguredPlugin,
 };
 use email::{EmailNotificationService, EmailParams};
@@ -91,6 +94,11 @@ const OPTION_EMAIL_TO: StringConfigOption = ConfigOption::new_str_no_default(
     "trampoline-email-to",
     "'To' addresses for payment failure notification emails. Format [\"Satoshi Nakamoto <satoshi@example.org>\",\"Hal Finney <hal@example.org>\"]",
 );
+const OPTION_EMAIL_SUBJECT: DefaultStringConfigOption = ConfigOption::new_str_with_default(
+    "trampoline-email-subject",
+    "Trampoline payment failure",
+    "'Subject' for payment failure notification emails.",
+);
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -104,7 +112,8 @@ async fn main() -> Result<(), Error> {
         .option(OPTION_PAYMENT_TIMEOUT)
         .option(OPTION_EMAIL_CC)
         .option(OPTION_EMAIL_FROM)
-        .option(OPTION_EMAIL_TO);
+        .option(OPTION_EMAIL_TO)
+        .option(OPTION_EMAIL_SUBJECT);
 
     let cp = match builder.configure().await? {
         Some(cp) => cp,
@@ -181,6 +190,7 @@ where
     let from: Option<String> = cp.option(&OPTION_EMAIL_FROM)?;
     let to: Option<String> = cp.option(&OPTION_EMAIL_TO)?;
     let cc: Option<String> = cp.option(&OPTION_EMAIL_CC)?;
+    let subject: String = cp.option(&OPTION_EMAIL_SUBJECT)?;
 
     let from = match from {
         Some(from) => from,
@@ -210,5 +220,9 @@ where
         .set_cc_addresses(cc)
         .build();
 
-    Ok(Some(EmailParams { destination, from }))
+    Ok(Some(EmailParams {
+        destination,
+        from,
+        subject,
+    }))
 }

@@ -55,13 +55,14 @@ pub struct EmailNotificationService {
 #[derive(Debug, Clone)]
 struct Config {
     client: Client,
-    from: String,
-    destination: Destination,
+    params: EmailParams,
 }
 
+#[derive(Debug, Clone)]
 pub struct EmailParams {
     pub from: String,
     pub destination: Destination,
+    pub subject: String,
 }
 
 impl EmailNotificationService {
@@ -96,11 +97,7 @@ impl EmailNotificationService {
         let client = Client::new(&aws_config);
 
         Self {
-            config: Some(Config {
-                client,
-                from: params.from,
-                destination: params.destination,
-            }),
+            config: Some(Config { client, params }),
         }
     }
 }
@@ -127,15 +124,19 @@ async fn notify(
         .charset("UTF-8")
         .data(req.to_html())
         .build()?;
+    let subject = Content::builder()
+        .charset("UTF-8")
+        .data(config.params.subject.clone())
+        .build()?;
     let body = Body::builder().html(html_content).build();
-    let message = Message::builder().body(body).build();
+    let message = Message::builder().body(body).subject(subject).build();
     let email_content = EmailContent::builder().simple(message).build();
 
     config
         .client
         .send_email()
-        .destination(config.destination.clone())
-        .from_email_address(config.from.clone())
+        .destination(config.params.destination.clone())
+        .from_email_address(config.params.from.clone())
         .content(email_content)
         .send()
         .await?;
