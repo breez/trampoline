@@ -96,7 +96,7 @@ where
                 debug!("pay returned error {:?}", e);
                 return match self.wait_payment(req.payment_hash).await? {
                     Some(preimage) => Ok(preimage),
-                    None => Err(anyhow!("payment failed")),
+                    None => Err(anyhow!(e.to_string())),
                 };
             }
         };
