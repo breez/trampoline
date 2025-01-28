@@ -42,6 +42,7 @@ where
 {
     retry_for: u16,
     rpc: Arc<R>,
+    xpay: bool,
 }
 
 impl<R> PayPaymentProvider<R>
@@ -49,11 +50,12 @@ where
     R: ClnRpc,
 {
     /// Initializes a new `PayPaymentProvider`
-    pub fn new(rpc: Arc<R>, payment_timeout: Duration) -> Self {
+    pub fn new(rpc: Arc<R>, payment_timeout: Duration, xpay: bool) -> Self {
         let retryfor = payment_timeout.as_secs().try_into().unwrap_or(u16::MAX);
         Self {
             retry_for: retryfor,
             rpc,
+            xpay,
         }
     }
 }
@@ -68,13 +70,26 @@ where
     /// value is the preimage, if successful.
     #[instrument(level = "trace", skip(self))]
     async fn pay(&self, req: PaymentRequest) -> Result<Vec<u8>> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let label = format!("trampoline-{}-{}", req.bolt11, now);
-
-        // TODO: extract the failure reason here?
-        let resp = match self
-            .rpc
-            .pay(&PayRequest {
+        let pay_req = if self.xpay {
+            PayRequest {
+                amount_msat: req.amount_msat.map(Amount::from_msat),
+                partial_msat: None,
+                bolt11: req.bolt11,
+                label: None,
+                riskfactor: None,
+                maxfeepercent: None,
+                retry_for: Some(self.retry_for),
+                maxdelay: Some(req.max_cltv_delta),
+                exemptfee: None,
+                localinvreqid: None,
+                exclude: None,
+                maxfee: Some(Amount::from_msat(req.max_fee_msat)),
+                description: None,
+            }
+        } else {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            let label = format!("trampoline-{}-{}", req.bolt11, now);
+            PayRequest {
                 amount_msat: req.amount_msat.map(Amount::from_msat),
                 partial_msat: None,
                 bolt11: req.bolt11,
@@ -88,9 +103,11 @@ where
                 exclude: None,
                 maxfee: Some(Amount::from_msat(req.max_fee_msat)),
                 description: None,
-            })
-            .await
-        {
+            }
+        };
+
+        // TODO: extract the failure reason here?
+        let resp = match self.rpc.pay(&pay_req).await {
             Ok(resp) => resp,
             Err(e) => {
                 debug!("pay returned error {:?}", e);
@@ -314,7 +331,7 @@ mod tests {
             })
             .return_once(|_| Ok(ListsendpaysResponse { payments: vec![] }))
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout(), false);
 
         let result = provider.wait_payment(payment_hash()).await;
         assert!(matches!(result, Ok(None)))
@@ -342,7 +359,7 @@ mod tests {
             })
             .return_once(|_| Ok(ListsendpaysResponse { payments: vec![] }))
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout(), false);
 
         let result = provider.wait_payment(payment_hash()).await;
         let preimage = preimage().to_vec();
@@ -396,7 +413,7 @@ mod tests {
                 })
             })
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout(), false);
 
         let result = provider.wait_payment(payment_hash()).await;
         let preimage = preimage().to_vec();
@@ -437,7 +454,7 @@ mod tests {
                 }))
             })
             .once();
-        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout());
+        let provider = PayPaymentProvider::new(Arc::new(rpc), payment_timeout(), false);
 
         let result = provider.wait_payment(payment_hash()).await;
         assert!(matches!(result, Ok(None)))

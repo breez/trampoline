@@ -5,8 +5,8 @@ use aws_sdk_sesv2::types::Destination;
 use block_watcher::BlockWatcher;
 use cln_plugin::{
     options::{
-        ConfigOption, DefaultIntegerConfigOption, DefaultStringConfigOption, FlagConfigOption,
-        StringConfigOption,
+        ConfigOption, DefaultBooleanConfigOption, DefaultIntegerConfigOption,
+        DefaultStringConfigOption, FlagConfigOption, StringConfigOption,
     },
     ConfiguredPlugin,
 };
@@ -99,6 +99,11 @@ const OPTION_EMAIL_SUBJECT: DefaultStringConfigOption = ConfigOption::new_str_wi
     "Trampoline payment failure",
     "'Subject' for payment failure notification emails.",
 );
+const OPTION_XPAY: DefaultBooleanConfigOption = ConfigOption::new_bool_with_default(
+    "trampoline-xpay",
+    false,
+    "Set this flag if xpay-handle-pay is set.",
+);
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -113,7 +118,8 @@ async fn main() -> Result<(), Error> {
         .option(OPTION_EMAIL_CC)
         .option(OPTION_EMAIL_FROM)
         .option(OPTION_EMAIL_TO)
-        .option(OPTION_EMAIL_SUBJECT);
+        .option(OPTION_EMAIL_SUBJECT)
+        .option(OPTION_XPAY);
 
     let cp = match builder.configure().await? {
         Some(cp) => cp,
@@ -140,6 +146,7 @@ async fn main() -> Result<(), Error> {
     let mpp_timeout_secs = cp.option(&OPTION_MPP_TIMEOUT)?.try_into()?;
     let allow_self_route_hints: bool = !cp.option(&OPTION_NO_SELF_ROUTE_HINTS)?;
     let payment_timeout_secs = cp.option(&OPTION_PAYMENT_TIMEOUT)?.try_into()?;
+    let xpay = cp.option(&OPTION_XPAY)?;
     let routing_policy = TrampolineRoutingPolicy {
         cltv_expiry_delta,
         fee_base_msat,
@@ -150,6 +157,7 @@ async fn main() -> Result<(), Error> {
     let payment_provider = Arc::new(PayPaymentProvider::new(
         Arc::clone(&rpc),
         Duration::from_secs(payment_timeout_secs),
+        xpay,
     ));
     let mut block_watcher = BlockWatcher::new(Arc::clone(&rpc));
     let (sender, receiver) = mpsc::channel(1);

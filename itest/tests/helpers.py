@@ -40,6 +40,8 @@ def setup(
         "plugin": plugin_path,
         "trampoline-mpp-timeout": "15",
         "disable-plugin": "cln-grpc",
+        "xpay-handle-pay": "true",
+        "trampoline-xpay": "true",
     }
     if hodl_plugin:
         recipient_opts["plugin"] = hodl_plugin_path
