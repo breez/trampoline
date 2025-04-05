@@ -51,11 +51,11 @@ jobs:
     strategy:
       matrix:
         cln:
-          - version: v25.02
+          - version: v25.02.1
             rust-version: stable
             org: ElementsProject
             repo: lightning
-          - version: v24.11.1
+          - version: v24.11.2
             rust-version: stable
             org: ElementsProject
             repo: lightning
@@ -124,8 +124,8 @@ jobs:
     strategy:
       matrix:
         cln-version:
-          - v25.02
-          - v24.11.1
+          - v25.02.1
+          - v24.11.2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
