@@ -4,6 +4,7 @@ use aws_sdk_sesv2::{
     types::{Body, Content, Destination, EmailContent, Message},
     Client,
 };
+use lightning_invoice::RouteHint;
 #[cfg(test)]
 use mockall::automock;
 use secp256k1::{hashes::sha256, PublicKey};
@@ -12,21 +13,37 @@ use tracing::{debug, error, warn};
 pub struct NotifyPaymentFailedRequest {
     pub destination: PublicKey,
     pub error: anyhow::Error,
+    pub hints: Vec<RouteHint>,
     pub payment_hash: sha256::Hash,
     pub invoice: String,
 }
 
 impl NotifyPaymentFailedRequest {
     pub fn to_html(&self) -> impl Into<String> {
+        let hints: Vec<_> = self
+            .hints
+            .iter()
+            .filter_map(|r| r.0.last())
+            .enumerate()
+            .map(|(i, hint)| {
+                format!(
+                    "<tr><td>Route hint {}: {}, {}</td></tr>",
+                    i,
+                    hint.src_node_id,
+                    scid_to_string(hint.short_channel_id),
+                )
+            })
+            .collect();
         format!(
             "
             <table>
-                <tr><td>Destination: {}</td></tr>
+                <tr><td>Destination: {}</td></tr>{}
                 <tr><td>Error: {}</td></tr>
                 <tr><td>Payment hash: {}</td></tr>
                 <tr><td>Invoice: {}</td></tr>
             </table>",
             self.destination,
+            hints.join(""),
             self.error
                 .to_string()
                 .replace("&", "&amp;")
@@ -39,6 +56,15 @@ impl NotifyPaymentFailedRequest {
             &self.invoice
         )
     }
+}
+
+fn scid_to_string(scid: u64) -> String {
+    format!(
+        "{}x{}x{}",
+        scid >> 40,
+        (scid >> 16) & 0xFFFFFF,
+        scid & 0xFFFF
+    )
 }
 
 #[cfg_attr(test, automock)]
