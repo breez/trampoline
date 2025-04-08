@@ -652,6 +652,7 @@ async fn payment_lifecycle<B, N, P, S>(
                 .notify_payment_failed(NotifyPaymentFailedRequest {
                     destination: trampoline.payee,
                     error: e,
+                    hints: trampoline.invoice.route_hints(),
                     payment_hash: *trampoline.invoice.payment_hash(),
                     invoice: trampoline.bolt11,
                 })
