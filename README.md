@@ -72,7 +72,7 @@ To run only the unit tests call `make utest`.
 
 #### Prerequisites
 In order to run the integration tests you need 
-- python >= 3.8, < 4.0
+- python >= 3.9, < 4.0
 - `virtualenv` (`python -m pip install --user virtualenv`)
 - `lightningd` accessible through your `PATH`
 - `bitcoind` and `bitcoin-cli` accessible through your `PATH`
